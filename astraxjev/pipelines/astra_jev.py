@@ -1,38 +1,40 @@
 """Pipeline B -- Astra + Jev.
 
-The division of labour, and why each piece lands where it does:
+One `gpt-6-astra` response costs about as much as two thousand `jev-1.14`
+queries. Everything below is an attempt to spend the frontier model only where
+nothing cheaper will do, and the three places it is unavoidable are:
 
-  Jev drives the coarse phases (APPROACH, RETRACT, PLACE).
-      These have 25-60 mm tolerances. Jev reads a centimetre-quantised text
-      description of the scene and returns a choice over seven coarse
-      directions. It cannot do better than 4 cm steps off that interface, and
-      it does not need to.
+  planning       decomposing an instruction into subgoals
+  grounding      turning "the Nivea Body Milk" plus a cluttered shelf image
+                 into a 3D frame
+  fine motion    correcting a pose to millimetres while looking at the thing
 
-  Jev gates the expensive model (`belief_stale`, `ready_for_fine`).
-      This is where most of the saving comes from, and it is the mechanism
-      worth defending in a paper. Astra alone must re-localise on a cadence
-      because asking "has my target belief drifted?" costs the same MLLM
-      forward pass as answering it. Jev answers that question as a noul for
-      roughly a tenth of the price, so Astra-Global is invoked *on demand*
-      instead of on a schedule.
+Jev takes the rest, in three roles matching the three its model card
+describes:
 
-  Astra-Local owns the fine phases (ALIGN, GRASP).
-      6 mm tolerance on a cluttered shelf board. Never delegated: the success
-      criterion voids the episode if a neighbouring item is displaced, so a
-      centimetre of error here is not a slower grasp, it is a failed one.
+  1. Coarse policy. A `choice` over seven generic directions. Jev reads a
+     centimetre-quantised text state, so it cannot do better than its coarse
+     step off that interface, and the coarse subgoals do not need better.
+     Which subgoals those are comes from the generated plan, not from any
+     hard-coded phase list, so this works on a plan it has never seen.
 
-  Jev scores Astra's proposal (`align_ok`).
-      Jev as an ordinal Q-function over actions. A proposal that scores below
-      threshold is rejected and Astra is asked again, bounded by
-      `max_align_resamples`. One cheap verification call can save an expensive
-      wasted execution -- but the gate is budgeted, because an unbounded
-      accept/reject loop would spend more on Astra than it saves.
+  2. Gate on the expensive model. A `noul` asking whether the stored
+     references have gone stale. This is where most of the saving comes from:
+     Astra alone must re-ground on a schedule, because *asking* the question
+     costs the same frontier call as *answering* it. Jev answers it for
+     1/2000th of the price, so grounding becomes need-based. A second noul
+     decides when to hand over to fine motion.
 
-Every tick in a coarse phase costs exactly one Jev call (all questions batched
-into a single forward pass, per arXiv:2610.11692) plus one cheap detector pass,
-because Jev reads text and not pixels and somebody has to produce the text.
-The detector is charged explicitly; leaving it out would be the easiest way to
-overstate this pipeline's advantage.
+  3. Ordinal Q-function over actions. A `score` rating Astra's proposed pose.
+     Below threshold the pose is rejected and Astra is asked again -- bounded
+     by `max_align_resamples`, because at $0.009 a correction an unbounded
+     accept/reject loop would spend more on Astra than it saves.
+
+Note what this pipeline does *not* have: any per-tick perception of its own.
+Jev reads text, and the text is built from forward kinematics (free) plus the
+references and obstacle list from the last grounding call. The coarse
+controller dead-reckons, which is precisely why "is my belief stale?" is the
+question worth paying for.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from typing import Optional
 
 import numpy as np
 
-from .. import geometry, prompts, verbalize
+from .. import verbalize
 from ..backends.base import (
     QID_ALIGN_OK,
     QID_COARSE,
@@ -50,30 +52,15 @@ from ..backends.base import (
     QID_STALE,
     Question,
 )
+from ..plan import TaskCapabilities
 from ..senses import Senses
-from ..types import (
-    GRIPPER_CLOSED,
-    GRIPPER_OPEN,
-    Observation,
-    Phase,
-    PHASE_SPEC,
-    TargetEstimate,
-    Waypoint,
-)
+from ..types import GRIPPER_CLOSED, Observation, Waypoint
 from ..verbalize import COARSE_ACTIONS
-from .base import (
-    RETRY,
-    EpisodeContext,
-    Geometry,
-    PhaseMachine,
-    Pipeline,
-    symbolic_state,
-)
-
-COARSE_PHASES = (Phase.APPROACH, Phase.RETRACT, Phase.PLACE)
+from .astra_only import AstraPipelineBase, PlanCache
+from .base import RETRY, EpisodeContext, Geometry, PlanCursor, symbolic_state
 
 
-class AstraJevPipeline(Pipeline):
+class AstraJevPipeline(AstraPipelineBase):
     name = "astra_jev"
 
     def __init__(
@@ -82,109 +69,79 @@ class AstraJevPipeline(Pipeline):
         jev,
         geom: Geometry,
         *,
-        detector_name: str = "detector",
         jev_precision_threshold_mm: float = 20.0,
         handoff_prob: float = 0.75,
         relocalize_prob: float = 0.6,
         max_align_resamples: int = 2,
         align_accept_score: float = 0.5,
-        retract_risk_escalate: float = 0.5,
-        chunk_len: int = 1,
-        max_ticks: int = 160,
+        obstacle_risk_escalate: float = 0.5,
+        obstacle_attention_m: float = 0.15,
+        max_relocalizes_per_subgoal: int = 2,
+        max_ticks: int = 200,
+        plan_cache: Optional[PlanCache] = None,
+        capabilities: Optional[TaskCapabilities] = None,
     ) -> None:
-        super().__init__(geom, max_ticks=max_ticks)
-        self.astra = astra
+        super().__init__(
+            astra, geom, max_ticks=max_ticks,
+            plan_cache=plan_cache, capabilities=capabilities,
+        )
         self.jev = jev
-        self.detector_name = detector_name
         self.jev_precision_threshold_mm = float(jev_precision_threshold_mm)
         self.handoff_prob = float(handoff_prob)
         self.relocalize_prob = float(relocalize_prob)
         self.max_align_resamples = int(max_align_resamples)
         self.align_accept_score = float(align_accept_score)
-        self.retract_risk_escalate = float(retract_risk_escalate)
-        self.chunk_len = int(chunk_len)
-
-        self._target: Optional[TargetEstimate] = None
-        self._nearest_neighbour_m = 0.5
-        self._n_astra = 0
+        self.obstacle_risk_escalate = float(obstacle_risk_escalate)
+        self.obstacle_attention_m = float(obstacle_attention_m)
+        self.max_relocalizes_per_subgoal = int(max_relocalizes_per_subgoal)
         self._n_jev = 0
+        self._relocalizes: dict[int, int] = {}
 
     def reset(self, ctx: EpisodeContext) -> None:
-        self._target = None
-        self._nearest_neighbour_m = 0.5
-        self._n_astra = 0
+        super().reset(ctx)
         self._n_jev = 0
+        self._relocalizes = {}
 
     def call_counts(self) -> dict[str, int]:
         return {"astra": self._n_astra, "jev": self._n_jev}
 
-    def jev_owns(self, phase: Phase) -> bool:
-        """Phase assignment is derived from tolerance, not hard-coded.
+    # -- the routing rule --------------------------------------------------
+    def jev_owns(self, cursor: PlanCursor) -> bool:
+        """Derived from the subgoal, never from its name.
 
-        A phase goes to Jev only if its positional tolerance is coarser than
-        the threshold *and* it does not require reasoning over raw pixels.
+        Three conditions, all read off the generated plan, none of which know
+        which task is being solved:
+
+          tolerance       coarser than the threshold;
+          needs_pixels    false, i.e. the pose follows from stored coordinates
+                          rather than from what is visible right now;
+          path_constrained  false, i.e. the motion is free in space.
+
+        The third was added after the door task. A coarse controller choosing
+        among seven fixed directions cuts the chord of an arc, and a gripper
+        holding a handle has to stay on the hinge radius -- so routing on
+        precision alone sent the swings to Jev, the grip slipped on the first
+        step, and the hybrid came out both less reliable and dearer than the
+        baseline. Precision is not the only thing that decides who can drive.
         """
-        spec = PHASE_SPEC[phase]
+        sg = cursor.current
         return (
-            spec["precision_mm"] >= self.jev_precision_threshold_mm
-            and not spec["needs_pixels"]
+            sg.tolerance_mm >= self.jev_precision_threshold_mm
+            and not sg.needs_pixels
+            and not sg.path_constrained
         )
 
-    # -- charged model calls ----------------------------------------------
-    def _localize(self, ctx: EpisodeContext, obs: Observation, phase: Phase) -> None:
-        r = self.astra.localize(obs)
-        ctx.ledger.record(
-            self.astra.name_global,
-            "localize",
-            phase,
-            r.tokens_in,
-            r.tokens_out,
-            images=r.images,
-            wall_ms=r.wall_ms,
-        )
-        self._target = r.target
-        self._n_astra += 1
-
-    def _plan(
-        self, ctx: EpisodeContext, obs: Observation, phase: Phase, goal: Waypoint
-    ) -> Waypoint:
-        r = self.astra.plan_local(obs, self._target, phase, goal, self.chunk_len)
-        ctx.ledger.record(
-            self.astra.name_local,
-            "plan_local",
-            phase,
-            r.tokens_in,
-            r.tokens_out,
-            images=r.images,
-            wall_ms=r.wall_ms,
-        )
-        self._n_astra += 1
-        return r.waypoints[-1]
-
-    def _detect(self, ctx: EpisodeContext, obs: Observation, phase: Phase) -> None:
-        """Cheap perception that produces the text Jev reads."""
-        tin, tout, nimg = prompts.detector_cost(obs)
-        ctx.ledger.record(
-            self.detector_name, "detect", phase, tin, tout, images=nimg, wall_ms=8.0
-        )
-        # In the mock path the detector's numbers reach the pipeline through
-        # the oracle-backed senses; with a real detector, wire its outputs in
-        # here. The *cost* of the call is what this experiment measures.
-        if getattr(ctx.senses, "oracle", None) is not None:
-            self._nearest_neighbour_m = ctx.senses.oracle.nearest_neighbour_distance()
-
-    def _ask_jev(
-        self, ctx: EpisodeContext, questions: list[Question], situation: str, hint: dict
-    ):
+    def _ask_jev(self, ctx, questions, situation, hint, subgoal):
         r = self.jev.query(situation, questions, hint=hint)
         ctx.ledger.record(
             self.jev.name,
             "query:" + "+".join(q.id for q in questions),
-            hint["state"].phase,
+            subgoal,
             r.tokens_in,
             0,
             forward_passes=r.forward_passes,
             wall_ms=r.wall_ms,
+            reported_usd=getattr(r, "reported_cost_usd", None),
         )
         self._n_jev += 1
         return r
@@ -195,34 +152,41 @@ class AstraJevPipeline(Pipeline):
         ctx: EpisodeContext,
         obs: Observation,
         senses: Senses,
-        fsm: PhaseMachine,
+        cursor: PlanCursor,
     ) -> Optional[Waypoint]:
-        if fsm.phase == Phase.LOCATE:
-            # Unavoidable: nothing but an MLLM turns the instruction plus a
-            # cluttered shelf into a 3D target.
-            self._localize(ctx, obs, fsm.phase)
-            return None
+        self._refs.update(senses.free_frames)
 
-        if self.jev_owns(fsm.phase):
-            return self._coarse_tick(ctx, obs, senses, fsm)
-        return self._fine_tick(ctx, obs, senses, fsm)
+        missing = [r for r in self._needed if r not in self._refs]
+        if missing:
+            # Unavoidable: nothing cheaper turns an instruction plus a
+            # cluttered shelf into a 3D frame.
+            self._localize(ctx, obs, cursor.current.name)
+            return RETRY
 
-    # -- coarse phases: Jev drives, and gates Astra ------------------------
+        if self.jev_owns(cursor):
+            return self._coarse_tick(ctx, obs, senses, cursor)
+        return self._fine_tick(ctx, obs, senses, cursor)
+
+    # -- coarse subgoals: Jev drives, and gates Astra ----------------------
     def _coarse_tick(
         self,
         ctx: EpisodeContext,
         obs: Observation,
         senses: Senses,
-        fsm: PhaseMachine,
+        cursor: PlanCursor,
     ) -> Optional[Waypoint]:
-        self._detect(ctx, obs, fsm.phase)
-
-        state = symbolic_state(
-            fsm, senses, self._target, self.geom, self._nearest_neighbour_m
-        )
-        goal = fsm.goal(self._target, senses)
-        if fsm.reached(senses, goal):
+        goal = cursor.goal(self._refs, senses)
+        if goal is None:
             return None
+        if cursor.reached(senses, goal):
+            return None
+
+        sg = cursor.current
+        frame = self._refs.get(sg.ref)
+        normal = frame.normal if frame else -goal.approach
+        obstacle_m = self.nearest_obstacle_m(senses)
+        state = symbolic_state(cursor, senses, goal, normal, obstacle_m)
+        step_m = self.geom.coarse_step(cursor.tolerance_m())
 
         questions = [
             Question(
@@ -235,139 +199,164 @@ class AstraJevPipeline(Pipeline):
                 options=COARSE_ACTIONS,
             )
         ]
-        # Only worth asking before the grasp. Once the item is in the gripper
-        # its position is known from proprioception, so re-localising it would
-        # be paying an MLLM for something free.
-        if not senses.holding_item:
+        # Worth asking only while the gripper is empty -- once something is
+        # held its position follows from proprioception -- and only while there
+        # is budget left to act on the answer. Asking a question whose answer
+        # cannot be acted on is pure cost, and an unbounded re-grounding loop
+        # is worse: a stuck gripper that keeps reporting "stale" would buy
+        # frontier calls forever. This cap is the gate on the gate.
+        budget_left = (
+            self._relocalizes.get(cursor.index, 0) < self.max_relocalizes_per_subgoal
+        )
+        if not senses.holding_item and budget_left:
             questions.append(
                 Question(
-                    id=QID_STALE,
-                    kind="noul",
-                    instruction="",
+                    id=QID_STALE, kind="noul", instruction="",
                     proposition=(
-                        "Stored target position is too stale to grasp from; "
+                        "Stored reference position is too stale to act on; "
                         "re-localise."
                     ),
                 )
             )
-        if fsm.phase == Phase.APPROACH:
+        # Asked on any coarse subgoal that immediately precedes a fine one --
+        # the plan says where that is.
+        if self._next_is_fine(cursor):
             questions.append(
                 Question(
-                    id=QID_READY,
-                    kind="noul",
-                    instruction="",
+                    id=QID_READY, kind="noul", instruction="",
                     proposition=(
-                        "Gripper is close enough to standoff that the precise "
-                        "grasp controller should take over."
+                        "Gripper is close enough to the goal that the precise "
+                        "controller should take over."
                     ),
                 )
             )
-        if fsm.phase == Phase.RETRACT:
+        # Asked whenever something could be knocked over. The generic
+        # condition is "moving while something else is nearby".
+        if obstacle_m < self.obstacle_attention_m:
             questions.append(
                 Question(
-                    id=QID_RETRACT_RISK,
-                    kind="noul",
-                    instruction="",
+                    id=QID_RETRACT_RISK, kind="noul", instruction="",
                     proposition=(
-                        "Pulling straight out along the shelf normal would "
-                        "displace a non-target item."
+                        "Moving along the planned path would displace a "
+                        "non-target item."
                     ),
                 )
             )
 
-        step_m = self.geom.coarse_step(fsm.tolerance_m())
         hint = {
             "state": state,
+            "subgoal": sg,
             "step_m": step_m,
             "handoff_radius_m": self.geom.handoff_radius_m,
             "finger_length_m": self.geom.finger_length_m,
+            # The pipeline knows where it *believes* the goal is. Whether that
+            # belief is stale is what it is paying Jev to judge; the mock
+            # backend resolves the truth from its own oracle.
+            "believed_goal": goal.position,
+            "obstacle_m": obstacle_m,
         }
-        # One forward pass for every question above -- that is the property
+        # One shared read of the state for every question above -- the property
         # the whole cost argument rests on.
         r = self._ask_jev(
-            ctx, questions, verbalize.describe(state, obs.prompt), hint
+            ctx, questions, verbalize.describe(state, obs.prompt), hint, sg.name
         )
 
-        # Need-based re-localisation, instead of Astra's cadence-based one.
-        if (
-            QID_STALE in r.answers
-            and r[QID_STALE].probability > self.relocalize_prob
-        ):
-            self._localize(ctx, obs, fsm.phase)
-            return RETRY  # re-decide next tick against the refreshed target
+        if QID_STALE in r.answers and r[QID_STALE].probability > self.relocalize_prob:
+            self._relocalizes[cursor.index] = (
+                self._relocalizes.get(cursor.index, 0) + 1
+            )
+            self._localize(ctx, obs, sg.name)
+            return RETRY
+
+        if QID_READY in r.answers and r[QID_READY].probability > self.handoff_prob:
+            return None  # hand over to the next, fine subgoal
 
         if (
-            fsm.phase == Phase.APPROACH
-            and QID_READY in r.answers
-            and r[QID_READY].probability > self.handoff_prob
+            QID_RETRACT_RISK in r.answers
+            and r[QID_RETRACT_RISK].probability > self.obstacle_risk_escalate
         ):
-            return None  # hand off to ALIGN
-
-        if (
-            fsm.phase == Phase.RETRACT
-            and QID_RETRACT_RISK in r.answers
-            and r[QID_RETRACT_RISK].probability > self.retract_risk_escalate
-        ):
-            # Too tight to pull straight out. Buy one Astra-Local plan to get
-            # out of the clutter; this is the escalation path, and it is
-            # counted like any other Astra call.
-            return self._plan(ctx, obs, fsm.phase, goal)
+            # Too tight to move coarsely. Buy one frontier correction to get
+            # clear; counted like any other Astra call.
+            return self._act_fine(ctx, obs, cursor, goal)
 
         choice = r[QID_COARSE].argmax()
         delta = verbalize.resolve_coarse_action(choice, state, step_m)
         if float(np.linalg.norm(delta)) < 1e-6:
             # Jev chose "hold" while the goal is not yet reached. Spend the
-            # tick and ask again rather than declaring the phase done.
+            # tick and ask again rather than declaring the subgoal done.
             return RETRY
 
-        approach, closing = geometry.approach_and_closing(self._target.shelf_normal)
-        gripper = GRIPPER_CLOSED if senses.holding_item else GRIPPER_OPEN
-        if fsm.phase == Phase.PLACE:
-            approach = np.array([0.0, 0.0, -1.0])
-            closing = np.array([0.0, 1.0, 0.0])
         return Waypoint(
             position=senses.tcp_position + delta,
-            approach=approach,
-            closing=closing,
-            gripper=gripper,
+            approach=goal.approach,
+            closing=goal.closing,
+            gripper=GRIPPER_CLOSED if senses.holding_item else sg.gripper,
         )
 
-    # -- fine phases: Astra plans, Jev verifies ----------------------------
+    def _next_is_fine(self, cursor: PlanCursor) -> bool:
+        """Is a fine subgoal coming up, skipping the free primitives?"""
+        for sg in cursor.plan.subgoals[cursor.index + 1 :]:
+            if sg.is_free:
+                continue
+            return sg.is_fine
+        return False
+
+    # -- fine subgoals: Astra proposes, Jev verifies -----------------------
     def _fine_tick(
         self,
         ctx: EpisodeContext,
         obs: Observation,
         senses: Senses,
-        fsm: PhaseMachine,
+        cursor: PlanCursor,
     ) -> Optional[Waypoint]:
-        # No belief-based early-out here: ALIGN is a 6 mm phase and the
-        # believed goal is centimetres off. The driver advances the phase when
-        # Astra-Local's own correction falls below tolerance.
-        goal = fsm.goal(self._target, senses)
-        proposal = self._plan(ctx, obs, fsm.phase, goal)
+        goal = cursor.goal(self._refs, senses)
+        if goal is None:
+            return None
+
+        # Two separate axes, easy to conflate:
+        #   `jev_owns`  decides *who drives* -- precision, pixels, constraint;
+        #   `is_fine`   decides *how completion is judged* -- servo
+        #               convergence for a millimetre subgoal, plain arrival
+        #               for a coarse one.
+        # A path-constrained subgoal with a coarse tolerance lands here
+        # because Jev cannot drive it, but it is still judged by arrival, so
+        # it needs the early-out that a truly fine subgoal must not have.
+        if not cursor.is_fine() and cursor.reached(senses, goal):
+            return None
+
+        proposal = self._act_fine(ctx, obs, cursor, goal)
+        sg = cursor.current
+
+        # Verification is worth paying for where a wrong pose is expensive to
+        # discover -- a missed grasp -- not where arrival is self-evident.
+        if not cursor.is_fine():
+            return proposal
 
         for _ in range(self.max_align_resamples):
+            frame = self._refs.get(sg.ref)
+            normal = frame.normal if frame else -goal.approach
             state = symbolic_state(
-                fsm, senses, self._target, self.geom, self._nearest_neighbour_m
+                cursor, senses, goal, normal, self.nearest_obstacle_m(senses)
             )
             q = Question(
                 id=QID_ALIGN_OK,
                 kind="score",
-                instruction="Quality of the proposed gripper pose as a clean grasp?",
+                instruction="Quality of the proposed gripper pose for this subgoal?",
             )
             hint = {
                 "state": state,
+                "subgoal": sg,
                 "proposal": proposal,
-                "step_m": self.geom.coarse_step(fsm.tolerance_m()),
+                "step_m": self.geom.coarse_step(cursor.tolerance_m()),
                 "finger_length_m": self.geom.finger_length_m,
             }
             r = self._ask_jev(
-                ctx, [q], verbalize.describe(state, obs.prompt), hint
+                ctx, [q], verbalize.describe(state, obs.prompt), hint, sg.name
             )
             if r[QID_ALIGN_OK].score_fraction() >= self.align_accept_score:
                 return proposal
-            # Rejected: the cheap verifier thinks this pose would miss. Ask
-            # Astra once more rather than execute a pose we expect to fail.
-            proposal = self._plan(ctx, obs, fsm.phase, goal)
+            # Rejected: the cheap verifier expects this pose to miss. One more
+            # frontier correction beats executing a pose we expect to fail.
+            proposal = self._act_fine(ctx, obs, cursor, goal)
 
         return proposal

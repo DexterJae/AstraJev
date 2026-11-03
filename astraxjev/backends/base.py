@@ -1,27 +1,34 @@
 """Backend protocols.
 
-Two model families sit behind these interfaces:
+Two real, hosted models sit behind these interfaces.
 
-Astra (arXiv:2506.06205) -- a hierarchical pair.
-  * Astra-Global: a multimodal LLM. Given camera images and the language
-    instruction it does goal localisation. This is the only component that can
-    turn pixels + "pick the Nivea Body Milk" into a 3D target, so neither
-    pipeline can avoid calling it.
-  * Astra-Local: a small multitask network over a 4D spatial-temporal encoder.
-    In the original paper it does local path planning for a *base*; here it is
-    used as the local planner in end-effector space, which is the adaptation
-    this project makes and the one to state plainly in any write-up.
+**Astra** -- `gpt-6-astra`, a frontier vision LLM. $10 per million input
+tokens and $50 per million *output* tokens, so the number of responses it
+produces, not the number of images it is shown, is what the bill tracks. It
+does three jobs here, each a separate call:
 
-Jev (arXiv:2610.11692) -- a closed decision model. It consumes a *textual*
-situation plus a list of typed questions and returns calibrated answers for all
-of them in ONE forward pass, generating no tokens. Three answer forms:
-  choice  -> probability distribution over a declared option set
-  score   -> a point on a declared ordinal rubric
-  noul    -> a probability in [0, 1] for an asserted proposition
+  plan_task   decompose the instruction into an ordered list of subgoals
+  localize    ground every reference the plan names, plus nearby obstacles
+  act_fine    correct a commanded end-effector pose by servoing on the
+              current wrist view -- the millimetre work
 
-The single-forward-pass property is the whole reason the hybrid can be cheap, so
-`JevBackend.query` takes a *batch* of questions by design: a pipeline that asks
-Jev three things on one tick must pay for one call, not three.
+Nothing cheaper can do the first two: turning "pick the Nivea Body Milk" plus
+a cluttered shelf image into a 3D frame is exactly what a frontier VLM is for.
+
+**Jev** -- `jev-1.14`, a closed decision model. $0.042 per million input
+tokens, output free. It consumes a *textual* situation plus a list of typed
+questions and returns calibrated answers for all of them in ONE shared read of
+the state. Four answer forms:
+
+  choice  a probability distribution over a declared option set
+  score   a probability-weighted position on a declared ordinal scale
+  noul    a probability in [0, 1] for an asserted proposition
+  box     image coordinates (not used here)
+
+One Astra call costs about as much as two thousand Jev calls. That ratio, not
+any architectural subtlety, is what the hybrid pipeline exploits, and the
+single-shared-read property is why `JevBackend.query` takes a *batch*: a
+pipeline that asks Jev three things on one tick must pay for one call.
 """
 
 from __future__ import annotations
@@ -29,7 +36,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional, Protocol, Sequence, runtime_checkable
 
-from ..types import Observation, Phase, SymbolicState, TargetEstimate, Waypoint
+from ..plan import Frame, Subgoal, TaskPlan  # noqa: F401
+from ..types import Observation, Waypoint
 
 QuestionKind = Literal["choice", "score", "noul"]
 
@@ -68,8 +76,13 @@ class Answer:
     id: str
     kind: QuestionKind
     distribution: dict[str, float] = field(default_factory=dict)  # choice
-    score: str = "unknown"  # score
+    score: str = "unknown"  # score, as a rubric level
     probability: float = 0.0  # noul
+    #: Score as a fraction of the rubric. The real Jev returns a numeric,
+    #: probability-weighted score that can land between levels, so the
+    #: fraction is carried directly when available rather than being recovered
+    #: from the nearest level name.
+    numeric_score: Optional[float] = None
 
     def argmax(self) -> str:
         if not self.distribution:
@@ -84,6 +97,8 @@ class Answer:
 
     def score_fraction(self) -> float:
         """Normalised position on the rubric, for threshold comparisons."""
+        if self.numeric_score is not None:
+            return float(self.numeric_score)
         r = self.score_rank()
         if r < 0:
             return 0.0
@@ -96,51 +111,65 @@ class JevResponse:
     tokens_in: int
     forward_passes: int
     wall_ms: float
+    #: The provider's own cost figure for this call, in USD, when it supplies
+    #: one. Authoritative: it replaces our computed figure in the ledger, so
+    #: for Jev the cost side of the comparison is measured rather than assumed.
+    reported_cost_usd: Optional[float] = None
 
     def __getitem__(self, qid: str) -> Answer:
         return self.answers[qid]
 
 
 @dataclass
-class AstraGlobalResponse:
-    target: TargetEstimate
-    tokens_in: int
-    tokens_out: int
-    images: int
-    wall_ms: float
+class AstraPlanResponse:
+    """Astra-Global acting as a planner.
+
+    Charged to both pipelines, once per distinct instruction. Generating the
+    decomposition instead of hard-coding it is the price of generality, and it
+    is a real price -- this call is as expensive as several localisations.
+    """
+
+    plan: TaskPlan
+    tokens_in: int = 0
+    tokens_out: int = 0
+    images: int = 0
+    #: Input tokens the provider served from its prompt cache, billed at a
+    #: tenth of the fresh rate on the frontier model.
+    cached_in: int = 0
+    wall_ms: float = 0.0
+    #: The provider's own USD figure, when the API returns one.
+    reported_cost_usd: Optional[float] = None
 
 
 @dataclass
-class AstraLocalResponse:
-    waypoints: list[Waypoint]
-    tokens_in: int
-    tokens_out: int
-    images: int
-    wall_ms: float
-    #: Astra-Local's own estimate of how well it can service the request.
-    #: Used by the Astra-only pipeline to decide whether to re-localise.
+class AstraLocalizeResponse:
+    """Every reference the plan names, grounded in one call."""
+
+    frames: dict[str, Frame]
+    #: Centres of nearby items that must not be displaced. Returned by the
+    #: same call, so the coarse controller needs no per-tick perception of its
+    #: own: it dead-reckons from here until Jev judges the belief stale.
+    obstacles: list = field(default_factory=list)
     confidence: float = 1.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    images: int = 0
+    cached_in: int = 0
+    wall_ms: float = 0.0
+    reported_cost_usd: Optional[float] = None
 
 
-@runtime_checkable
-class AstraBackend(Protocol):
-    name_global: str
-    name_local: str
+@dataclass
+class AstraActResponse:
+    """One fine-motion correction."""
 
-    def localize(self, obs: Observation) -> AstraGlobalResponse:
-        """Astra-Global: pixels + instruction -> 3D target estimate."""
-        ...
-
-    def plan_local(
-        self,
-        obs: Observation,
-        target: TargetEstimate,
-        phase: Phase,
-        goal: Waypoint,
-        chunk_len: int,
-    ) -> AstraLocalResponse:
-        """Astra-Local: pixels + state + goal -> end-effector waypoint chunk."""
-        ...
+    waypoint: Waypoint
+    tokens_in: int = 0
+    tokens_out: int = 0
+    images: int = 0
+    cached_in: int = 0
+    wall_ms: float = 0.0
+    reported_cost_usd: Optional[float] = None
 
 
 #: Canonical question ids. Both pipelines and both Jev backends agree on
@@ -150,6 +179,29 @@ QID_READY = "ready_for_fine"
 QID_STALE = "belief_stale"
 QID_RETRACT_RISK = "retract_risk"
 QID_ALIGN_OK = "align_ok"
+
+
+@runtime_checkable
+class AstraBackend(Protocol):
+    """The expensive model. One name, three jobs."""
+
+    name: str
+
+    def plan_task(self, obs: Observation) -> AstraPlanResponse:
+        """pixels + instruction -> an ordered list of subgoals."""
+        ...
+
+    def localize(
+        self, obs: Observation, refs: Sequence[str]
+    ) -> AstraLocalizeResponse:
+        """pixels + instruction -> a frame per named reference, plus obstacles."""
+        ...
+
+    def act_fine(
+        self, obs: Observation, subgoal: Subgoal, goal: Waypoint
+    ) -> AstraActResponse:
+        """pixels + commanded pose -> the corrected pose. Millimetre work."""
+        ...
 
 
 @runtime_checkable

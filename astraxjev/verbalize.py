@@ -3,29 +3,30 @@
 Three deliberate choices, all load-bearing for the experiment:
 
 1. Everything is quantised to whole centimetres. Jev structurally *cannot*
-   drive a 6 mm-tolerance grasp off this description, so the division of labour
-   is enforced by the interface rather than by a promise in a paper.
+   drive a millimetre-tolerance contact off this description, so the division
+   of labour is enforced by the interface rather than by a promise in a paper.
 
 2. The encoding is terse key=value, not prose. Jev is billed per prompt token
    and its interface is *typed* -- the question kind and the declared option
    set already carry the semantics -- so English sentences explaining the
-   situation would be pure cost. This matters more than it looks: Jev calls are
-   the largest single line item in the hybrid pipeline, so prompt length is one
-   of the handful of parameters the cost claim is actually sensitive to. The
-   token count is measured by astraxjev/cost.py, never assumed.
+   situation would be pure cost. Jev calls are the largest single line item in
+   the hybrid pipeline, so prompt length is one of the few parameters the cost
+   claim is sensitive to. The token count is measured, never assumed.
 
-3. The fields are fixed and ordered, so the prompt length barely varies across
-   ticks and the per-episode cost is predictable.
+3. Nothing here names a task phase. The description is "move the gripper from
+   here to there without touching that", which is why the same verbaliser
+   serves a shelf pick, a floor pick, a board-to-board transfer and a fridge
+   door without modification.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from .types import Phase, SymbolicState
+from .types import SymbolicState
 
-#: Jev's coarse action vocabulary in the TCP frame. The axes are expressed
-#: relative to the shelf so the option names stay meaningful across layouts.
+#: Jev's coarse action vocabulary, in the frame of the current subgoal's
+#: reference. Generic directions, not task steps.
 COARSE_ACTIONS = (
     "toward_goal",
     "away_from_goal",
@@ -36,50 +37,35 @@ COARSE_ACTIONS = (
     "hold",
 )
 
-PHASE_GOAL = {
-    Phase.APPROACH: "standoff",
-    Phase.RETRACT: "standoff",
-    Phase.PLACE: "basket",
-}
+#: One line, sent once per query, covering what is constant across ticks.
+PREAMBLE = (
+    "units=cm int; frame=goal-relative; base=locked(arm+gripper only); "
+    "rule=displacing a non-target item voids the episode"
+)
 
 
 def _cm(x: float) -> int:
     return int(round(float(x) * 100.0))
 
 
-def _vec_cm(v: np.ndarray) -> str:
+def _vec_cm(v) -> str:
     v = np.asarray(v, dtype=np.float64).reshape(3)
     return f"({_cm(v[0])}, {_cm(v[1])}, {_cm(v[2])})"
 
 
-#: One line, sent once per query, covering everything that is constant across
-#: ticks: units, frame, and the two hard rules of the task.
-PREAMBLE = (
-    "units=cm int; frame=shelf; base=locked(arm+gripper only); "
-    "rule=displacing a non-target item voids the episode"
-)
-
-
 def describe(state: SymbolicState, instruction: str) -> str:
-    """Render the situation string for a Jev query.
-
-    Terse by design -- see the module docstring. Roughly 110 tokens, against
-    ~250 for an equivalent prose rendering, and Jev is the hybrid pipeline's
-    largest cost line.
-    """
-    goal_name = PHASE_GOAL.get(state.phase, "standoff")
-    to_goal = state.vector_to(goal_name)
-
+    """Render the situation string for a Jev query (~110 tokens)."""
+    to_goal = state.to_goal()
     return (
         f"{PREAMBLE}\n"
         f"task={instruction}\n"
-        f"phase={state.phase.value} goal={goal_name}\n"
+        f"subgoal={state.subgoal} kind={state.goal_kind}\n"
         f"grip={'closed' if state.gripper_closed else 'open'} "
         f"held={'target' if state.holding_item else 'none'}\n"
         f"d_goal={_vec_cm(to_goal)} |d_goal|={_cm(np.linalg.norm(to_goal))}\n"
         f"d_nearest_nontarget={int(round(state.nearest_neighbour_cm))}\n"
-        f"shelf_normal={_vec_cm(state.shelf_normal)}\n"
-        f"tick={state.steps_in_phase}/{state.steps_total}"
+        f"frame_normal={_vec_cm(state.frame_normal)}\n"
+        f"tick={state.steps_in_subgoal}/{state.steps_total}"
     )
 
 
@@ -89,29 +75,24 @@ def resolve_coarse_action(
     """Map one of COARSE_ACTIONS to a TCP translation in world coordinates.
 
     `toward_goal` is a *direction*, not a teleport: the step is clipped to
-    `step_m`, so reaching the goal takes several Jev ticks. That keeps the
-    comparison honest -- the hybrid pays for every tick it uses.
+    `step_m`, so reaching the goal takes several Jev ticks and the hybrid pays
+    for every tick it uses.
     """
-    goal_name = PHASE_GOAL.get(state.phase, "standoff")
-    to_goal = state.vector_to(goal_name)
+    to_goal = state.to_goal()
     dist = float(np.linalg.norm(to_goal))
 
-    normal = np.asarray(state.shelf_normal, dtype=np.float64)
+    normal = np.asarray(state.frame_normal, dtype=np.float64).reshape(3)
     up = np.array([0.0, 0.0, 1.0])
     lateral = np.cross(up, normal)
-    nl = np.linalg.norm(lateral)
+    nl = float(np.linalg.norm(lateral))
     lateral = lateral / nl if nl > 1e-9 else np.array([0.0, 1.0, 0.0])
 
     if choice == "hold":
         return np.zeros(3)
     if choice == "toward_goal":
-        if dist < 1e-6:
-            return np.zeros(3)
-        return to_goal / dist * min(step_m, dist)
+        return np.zeros(3) if dist < 1e-6 else to_goal / dist * min(step_m, dist)
     if choice == "away_from_goal":
-        if dist < 1e-6:
-            return normal * step_m
-        return -to_goal / dist * step_m
+        return normal * step_m if dist < 1e-6 else -to_goal / dist * step_m
     if choice == "up":
         return up * step_m
     if choice == "down":

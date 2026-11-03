@@ -1,9 +1,15 @@
 # Task and pipeline configuration.
+#
+# Note what is NOT here any more: standoff distances, retract distances, basket
+# release offsets, torso lifts. Those are properties of a *task*, and tasks are
+# now decomposed by Astra-Global into a plan whose subgoals carry their own
+# parameters (see astraxjev/plan.py). What remains below is either the
+# evaluation setup or a property of the controllers themselves.
 
 task:
-  # PickToBasket: "the robot is spawned in close proximity to the shelf", so the
-  # task is solvable arm-only. We additionally pin the base action dims to zero
-  # (see astraxjev/types.py) to guarantee no mobile manipulation.
+  # PickToBasket: "the robot is spawned in close proximity to the shelf", so
+  # the task is solvable arm-only. We additionally pin the base action dims to
+  # zero (see astraxjev/types.py) to guarantee no mobile manipulation.
   env_id: PickToBasketContNiveaEnv
   scene_dir: demo_envs/test_unseen_items_pick_to_basket
   robot_uids: ds_fetch_basket
@@ -11,63 +17,65 @@ task:
   num_traj: 30
   start_seed: 0
   max_horizon: 500
-  freeze_base: true
-  freeze_head: true
 
 geometry:
-  # Standoff distance along the shelf normal for the pre-grasp pose.
-  standoff_m: 0.18
-  # Jev's coarse step, as a multiple of the current phase's own tolerance,
-  # clamped. At scale 4 that is 16 cm in APPROACH, 10 cm in RETRACT and 24 cm
-  # in PLACE -- always far above the 6 mm fine tolerance, so coarse control
-  # cannot masquerade as fine control. This is the hybrid's main cost knob;
-  # scripts/sweep_pricing.py sweeps it alongside the baseline's cadence.
+  # Properties of the coarse controller, not of any task.
+  #
+  # A coarse controller steps in increments proportional to the error the
+  # subgoal allows. At scale 4 that is ~18 cm for a 45 mm standoff and 30 cm
+  # (the cap) for a 200 mm drop into a basket -- always far above the fine
+  # tolerance, so coarse control cannot masquerade as fine control.
+  #
+  # This is the hybrid's main cost knob -- a smaller step means more Jev ticks
+  # per episode -- exactly as the re-localisation cadence is the baseline's.
+  # scripts/sweep_pricing.py sweeps both.
   coarse_step_scale: 4.0
   coarse_step_min_m: 0.05
   coarse_step_max_m: 0.30
-  # Radius within which APPROACH is considered complete and ALIGN takes over.
-  handoff_radius_m: 0.06
-  retract_m: 0.30
   finger_length_m: 0.03
-  # Both copied from `drop_to_basket` in the benchmark's reference solution:
-  # release well above the basket rim, and raise the torso first or the pose
-  # is outside the fixed-base arm's reach.
-  basket_release_offset_m: [0.05, 0.0, 0.40]
-  pre_place_lift_m: 0.30
+  # Radius within which the cheap controller offers to hand over to the
+  # precise one.
+  handoff_radius_m: 0.06
 
 astra_only:
-  # Astra-Global is re-queried for target re-localisation every N decision
-  # ticks; Astra-Local is queried every tick.
+  # Astra re-grounds every N decision ticks. 0 means ground once per episode,
+  # which is the cheapest this baseline can be.
   global_every_n_ticks: 4
-  # Waypoints per Astra-Local call (action chunk length).
-  chunk_len: 1
-  # Decision tick = one pipeline.infer() call. The executor consumes a
-  # waypoint over multiple env steps.
-  max_ticks: 120
+  max_ticks: 160
 
 astra_jev:
-  # Jev handles phases whose tolerance is coarser than this.
+  # Subgoals with a tolerance at least this coarse, and which do not need
+  # pixels, go to Jev. Nothing here names a task or a phase.
   jev_precision_threshold_mm: 20.0
-  # Hand control to Astra when Jev's "ready to grasp" noul probability exceeds
+  # Hand control to the precise controller when Jev's "ready" noul exceeds
   # this. Below it, Jev keeps driving the cheap approach.
   handoff_prob: 0.75
-  # Jev-as-Q: after Astra proposes an ALIGN waypoint, Jev scores it. Reject and
+  # Re-ground with Astra-Global when Jev's "belief is stale" noul exceeds this.
+  relocalize_prob: 0.6
+  # Jev-as-Q: after Astra proposes a fine waypoint, Jev scores it. Reject and
   # ask Astra again at most this many times -- the accept/reject gate is there
   # to stop wasted Astra calls, so it must itself be budgeted.
   max_align_resamples: 2
   align_accept_score: 0.5
-  # Escalate one Astra call if Jev's neighbour-collision noul exceeds this
-  # during RETRACT (success is void if a non-target item is displaced).
-  retract_risk_escalate: 0.5
-  max_ticks: 160
+  # Buy one frontier correction when Jev judges that moving coarsely would
+  # displace a neighbouring item (which voids the episode).
+  obstacle_risk_escalate: 0.5
+  # Only ask the obstacle question when something is this close.
+  obstacle_attention_m: 0.15
+  # Cap on need-based re-groundings per subgoal. Without it, a gripper that is
+  # stuck for some other reason keeps reporting a stale belief and keeps
+  # buying frontier calls -- the gate needs a gate.
+  max_relocalizes_per_subgoal: 2
+  max_ticks: 200
 
 mock:
   # Noise injected into the mock backends, in metres. These control the
-  # *success-rate* half of the comparison and are a simulation assumption;
-  # the cost half does not depend on them.
-  astra_global_sigma_m: 0.025
-  astra_local_sigma_m: 0.004
+  # *success-rate* half of the comparison and are a simulation assumption; the
+  # cost half does not depend on them.
+  # Localisation is semantically strong but spatially coarse; fine motion
+  # servos on current pixels and is millimetre-scale.
+  astra_localize_sigma_m: 0.025
+  astra_act_sigma_m: 0.004
   jev_choice_accuracy: 0.88
   jev_noul_noise: 0.08
-  detector_sigma_m: 0.02
   seed: 0

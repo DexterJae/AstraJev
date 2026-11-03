@@ -12,6 +12,8 @@ result does not rest on Jev being near-perfect.
 
 Answers are synthesised from the oracle, never from the billed prompt, so the
 token counts this backend reports are exactly what a real deployment would pay.
+Nothing here knows about any particular task: the noul truths are generic
+spatial predicates over the current subgoal.
 """
 
 from __future__ import annotations
@@ -20,11 +22,11 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from ..geometry import distance, grasp_waypoint, standoff_waypoint
 from ..oracle import Oracle
+from ..plan import resolve
 from ..tokens import count_text_tokens
-from ..types import SymbolicState, TargetEstimate
-from ..verbalize import COARSE_ACTIONS, PHASE_GOAL, resolve_coarse_action
+from ..types import SymbolicState
+from ..verbalize import COARSE_ACTIONS, resolve_coarse_action
 from .base import (
     DEFAULT_RUBRIC,
     QID_ALIGN_OK,
@@ -101,9 +103,8 @@ class MockJevBackend:
         state: SymbolicState | None = hint.get("state")
         if state is None:
             return options[0]
-        step_m = float(hint.get("step_m", 0.04))
-        goal_name = PHASE_GOAL.get(state.phase, "standoff")
-        to_goal = state.vector_to(goal_name)
+        step_m = float(hint.get("step_m", 0.12))
+        to_goal = state.to_goal()
         best, best_d = options[0], float("inf")
         for o in options:
             try:
@@ -127,25 +128,43 @@ class MockJevBackend:
 
         if qid == QID_READY:
             # True when the gripper is inside the handoff ball around the
-            # pre-grasp standoff point.
+            # current coarse goal.
             radius = float(hint.get("handoff_radius_m", 0.06))
-            d = float(np.linalg.norm(state.vector_to("standoff")))
-            return _soft_below(d, radius)
+            return _soft_below(float(np.linalg.norm(state.to_goal())), radius)
 
         if qid == QID_STALE:
-            # True when the believed target has drifted from the real one by
-            # more than the coarse step. This is the question that lets the
-            # hybrid call Astra-Global on demand instead of on a cadence.
-            believed = np.asarray(state.target_position, dtype=np.float64)
-            real = self.oracle.target_position()
-            drift = float(np.linalg.norm(believed - real))
-            return _soft_above(drift, float(hint.get("step_m", 0.04)))
+            # True when the believed goal has drifted from where it really is
+            # by more than a coarse step. The caller supplies only its own
+            # belief -- judging that belief is what it is paying for -- so the
+            # truth is resolved here, from the oracle.
+            believed = hint.get("believed_goal")
+            subgoal = hint.get("subgoal")
+            if believed is None or subgoal is None:
+                return 0.0
+            truth = self.oracle.frames()
+            if subgoal.ref not in truth:
+                return 0.0
+            ideal = resolve(
+                subgoal,
+                truth,
+                tcp_position=np.asarray(state.tcp_position),
+                anchor=None,
+                finger_length_m=float(hint.get("finger_length_m", 0.03)),
+            )
+            if ideal is None:
+                return 0.0
+            drift = float(np.linalg.norm(np.asarray(believed) - ideal.position))
+            return _soft_above(drift, float(hint.get("step_m", 0.12)))
 
         if qid == QID_RETRACT_RISK:
-            # True when a non-target item is close enough to the gripper that
-            # pulling straight out is likely to drag it along.
-            d = self.oracle.nearest_neighbour_distance()
-            return _soft_below(d, 0.08)
+            # True when something that must not move is close enough to the
+            # gripper that the planned path is likely to drag it along. The
+            # distance comes from the caller's dead-reckoned belief, which is
+            # what a real deployment would have; the oracle supplies the truth
+            # the answer is noised around.
+            believed = float(hint.get("obstacle_m", 10.0))
+            true_d = self.oracle.nearest_neighbour_distance()
+            return _soft_below(min(believed, true_d), 0.08)
 
         return 0.5
 
@@ -162,22 +181,30 @@ class MockJevBackend:
         if qid != QID_ALIGN_OK:
             return None
         proposal = hint.get("proposal")
-        if proposal is None:
+        subgoal = hint.get("subgoal")
+        if proposal is None or subgoal is None:
             return None
-        # How good is Astra's proposed grasp pose, judged against the real
-        # item? This is Jev used as an ordinal Q-function over actions -- the
-        # second role its paper describes -- and it is what lets the hybrid
-        # reject a bad chunk for the price of a Jev call instead of discovering
-        # the failure after executing it.
-        truth_target = TargetEstimate(
-            position=self.oracle.target_position(),
-            extent=self.oracle.target_extent(),
-            shelf_normal=self.oracle.shelf_normal(),
+        # How good is Astra's proposed pose, judged against the real reference?
+        # This is Jev used as an ordinal Q-function over actions -- the second
+        # role its paper describes -- and it is what lets the hybrid reject a
+        # bad chunk for the price of a Jev call instead of discovering the
+        # failure after executing it.
+        truth = self.oracle.frames()
+        if subgoal.ref not in truth:
+            return None
+        ideal = resolve(
+            subgoal,
+            truth,
+            tcp_position=np.asarray(hint["state"].tcp_position),
+            anchor=proposal,
+            finger_length_m=float(hint.get("finger_length_m", 0.03)),
         )
-        ideal = grasp_waypoint(truth_target, float(hint.get("finger_length_m", 0.03)))
-        err = distance(proposal, ideal)
-        # 0 mm -> 1.0, 20 mm -> ~0.0
-        return float(np.clip(1.0 - err / 0.02, 0.0, 1.0))
+        if ideal is None:
+            return None
+        err = float(np.linalg.norm(proposal.position - ideal.position))
+        tol = max(subgoal.tolerance_m, 1e-4)
+        # At the tolerance the score is ~0.5; at zero error it is 1.
+        return float(np.clip(1.0 - err / (2.0 * tol), 0.0, 1.0))
 
 
 def _soft_below(x: float, threshold: float, width: float = 0.25) -> float:

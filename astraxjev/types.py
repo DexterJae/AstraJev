@@ -15,7 +15,6 @@ effector waypoints and how often.
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
@@ -33,44 +32,10 @@ GRIPPER_OPEN = 1.0
 GRIPPER_CLOSED = -1.0
 
 
-class Phase(enum.Enum):
-    """Phases of PickToBasket, ordered.
-
-    The `precision_mm` field is the positional tolerance the phase can tolerate
-    and is what decides which model is allowed to drive it in the hybrid
-    pipeline.  LOCATE additionally needs *semantic* grounding from pixels,
-    which is why it always costs an Astra-Global call.
-    """
-
-    LOCATE = "locate"
-    APPROACH = "approach"
-    ALIGN = "align"
-    GRASP = "grasp"
-    RETRACT = "retract"
-    PLACE = "place"
-    SETTLE = "settle"
-    DONE = "done"
-
-
-#: A phase at or below this tolerance is a "fine" phase: it needs a visuomotor
+#: A subgoal at or below this tolerance is a "fine" one: it needs a visuomotor
 #: controller servoing on current pixels, and its completion cannot be judged
 #: against a stale global estimate.
 FINE_PRECISION_MM = 10.0
-
-#: Positional tolerance per phase in millimetres, and whether the phase needs
-#: semantic understanding of raw pixels.  Derived from the task: the basket
-#: success threshold is a loose axis-aligned box, whereas a grasp on a cluttered
-#: shelf board needs the TCP placed to within a finger width.
-PHASE_SPEC: dict[Phase, dict[str, Any]] = {
-    Phase.LOCATE: {"precision_mm": 50.0, "needs_pixels": True},
-    Phase.APPROACH: {"precision_mm": 40.0, "needs_pixels": False},
-    Phase.ALIGN: {"precision_mm": 6.0, "needs_pixels": True},
-    Phase.GRASP: {"precision_mm": 6.0, "needs_pixels": True},
-    Phase.RETRACT: {"precision_mm": 25.0, "needs_pixels": False},
-    Phase.PLACE: {"precision_mm": 60.0, "needs_pixels": False},
-    Phase.SETTLE: {"precision_mm": 1e9, "needs_pixels": False},
-    Phase.DONE: {"precision_mm": 1e9, "needs_pixels": False},
-}
 
 
 @dataclass
@@ -164,44 +129,30 @@ class SymbolicState:
 
     Jev consumes a *textual* situation description, not pixels (see
     arXiv:2610.11692), so the hybrid pipeline needs a cheap state verbaliser.
-    Everything in here is obtainable from a small open-vocabulary detector plus
+    Everything here is obtainable from a small open-vocabulary detector plus
     proprioception -- deliberately no sub-centimetre quantities, because the
-    whole premise is that Jev only drives the low-precision phases.
+    whole premise is that Jev only drives the low-precision subgoals.
+
+    Note what is *not* here: the name of a task phase. The fields describe a
+    generic "move the gripper from here to there without touching that", which
+    is why the same verbaliser serves a shelf pick, a floor pick and a door.
     """
 
-    phase: Phase
+    subgoal: str
+    goal_kind: str
     tcp_position: np.ndarray
-    target_position: np.ndarray
-    standoff_position: np.ndarray
-    basket_position: np.ndarray
-    shelf_normal: np.ndarray
+    goal_position: np.ndarray
+    frame_normal: np.ndarray
     gripper_closed: bool
     holding_item: bool
-    nearest_neighbour_cm: float  # distance from TCP to the closest non-target item
-    steps_in_phase: int
+    nearest_neighbour_cm: float
+    steps_in_subgoal: int
     steps_total: int
 
-    def vector_to(self, name: str) -> np.ndarray:
-        goal = {
-            "target": self.target_position,
-            "standoff": self.standoff_position,
-            "basket": self.basket_position,
-        }[name]
-        return np.asarray(goal, dtype=np.float64) - np.asarray(
-            self.tcp_position, dtype=np.float64
-        )
-
-
-@dataclass
-class StepResult:
-    """One pipeline decision: the waypoints to execute plus bookkeeping."""
-
-    waypoints: list[Waypoint] = field(default_factory=list)
-    phase: Phase = Phase.LOCATE
-    done: bool = False
-    note: str = ""
-    # Set when the pipeline wants the executor to just hold still.
-    idle_steps: int = 0
+    def to_goal(self) -> np.ndarray:
+        return np.asarray(self.goal_position, dtype=np.float64).reshape(
+            3
+        ) - np.asarray(self.tcp_position, dtype=np.float64).reshape(3)
 
 
 @dataclass
@@ -209,7 +160,11 @@ class EpisodeOutcome:
     seed: int
     success: bool
     env_steps: int
-    phase_reached: Phase
+    #: Name of the subgoal the episode stopped on, and how far through the
+    #: generated plan it got.
+    subgoal_reached: str
+    subgoals_completed: int
+    subgoals_total: int
     cost_usd: float
     astra_calls: int
     jev_calls: int

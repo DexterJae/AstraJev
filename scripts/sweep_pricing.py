@@ -143,6 +143,17 @@ def sweep_price(a: dict, b: dict, key: str, label: str, unit: str) -> None:
         )
 
 
+def _groundings(result: dict) -> float:
+    """Re-groundings per episode.
+
+    Counted from the `localize` operation rather than from a backend name,
+    because the frontier model is one backend doing three different jobs and
+    only this one is on a cadence.
+    """
+    calls = result.get("by_op", {}).get("localize", {}).get("calls", 0)
+    return calls / max(1, result["episodes"])
+
+
 def run_grid(args) -> None:
     import run_eval
 
@@ -167,7 +178,7 @@ def run_grid(args) -> None:
         print(
             f"  astra cadence={c or 'once':>4}  success={r['success_rate']:.3f} "
             f"usd/success={r['usd_per_success']:.4e} "
-            f"global_calls/ep={r['by_backend'].get('astra_global', {}).get('calls', 0) / max(1, r['episodes']):.2f}"
+            f"groundings/ep={_groundings(r):.2f}"
         )
 
     scales = [2.0, 4.0, 8.0]
@@ -176,12 +187,14 @@ def run_grid(args) -> None:
     import yaml
 
     original = cfg_path.read_text()
+    written: list[Path] = []
     try:
         for sc in scales:
             cfg = yaml.safe_load(original)
             cfg["geometry"]["coarse_step_scale"] = sc
             tmp = ROOT / "results" / f"_cfg_scale{sc}.yaml"
             tmp.write_text(yaml.safe_dump(cfg))
+            written.append(tmp)
             r = run_eval.main(
                 [
                     "--pipeline", "astra_jev", "--world", args.world,
@@ -198,6 +211,8 @@ def run_grid(args) -> None:
             )
     finally:
         cfg_path.write_text(original)
+        for tmp in written:
+            tmp.unlink(missing_ok=True)
 
     cheapest_base = min(base.values(), key=lambda r: r["usd_per_success"])
     dearest_hyb = max(hyb.values(), key=lambda r: r["usd_per_success"])
@@ -244,24 +259,16 @@ def breakeven_relocalisation_rate(base: dict, hybrid: dict) -> None:
     any write-up next to the headline figure.
     """
     pts = sorted(
-        (
-            r["by_backend"].get("astra_global", {}).get("calls", 0)
-            / max(1, r["episodes"]),
-            r["usd_per_success"],
-        )
-        for r in base.values()
+        (_groundings(r), r["usd_per_success"]) for r in base.values()
     )
     target = hybrid["usd_per_success"]
-    hyb_rate = (
-        hybrid["by_backend"].get("astra_global", {}).get("calls", 0)
-        / max(1, hybrid["episodes"])
-    )
+    hyb_rate = _groundings(hybrid)
 
     print()
     print("break-even re-localisation rate")
     print("-" * 72)
     print(
-        f"  hybrid: {hyb_rate:.2f} Astra-Global calls/episode at"
+        f"  hybrid: {hyb_rate:.2f} re-groundings/episode at"
         f" {target:.4e} USD/success"
     )
 
@@ -286,15 +293,15 @@ def breakeven_relocalisation_rate(base: dict, hybrid: dict) -> None:
 
     print(
         f"  break-even: Astra alone becomes the dearer option above"
-        f" ~{crossing:.2f} Astra-Global calls per episode."
+        f" ~{crossing:.2f} re-groundings per episode."
     )
     print(
         "  Below that rate, plain Astra is cheaper -- the Jev and detector"
         " ticks cost more than the Astra-Global calls they avoid."
     )
     print(
-        "  So the quantity to measure on the real benchmark is how often"
-        " Astra-Global must re-localise under real occlusion and clutter."
+        "  So the quantity to measure on the real benchmark is how often the"
+        " frontier model must re-ground under real occlusion and clutter."
     )
 
 

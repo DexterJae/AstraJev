@@ -12,14 +12,18 @@
 #   ENV_ID=...       default PickToBasketContNiveaEnv (train item)
 #                    PickToBasketContNestleEnv for the OOD / zero-shot item
 #   SCENE_DIR=...    default demo_envs/test_unseen_items_pick_to_basket
-#   ASTRA_URL=...    real Astra endpoint; without it the mock backend is used
-#   JEV_URL=...      real Jev endpoint
+#   OPENROUTER_API_KEY=...  switches to --backend api: real jev-1.14 and a real
+#                           vision LLM standing in for Astra. Set this and the
+#                           dollar figures become provider-reported rather
+#                           than computed.
+#   VLM_MODEL=gpt-6-astra   which model fills the Astra slot
+#   LOCAL_POLICY_PORT=8000  a RoboBenchMart policy server (octo/pi0) to use for
+#                           fine motion instead of the mock
 #
-# With ASTRA_URL/JEV_URL set the run uses --backend http and the success rates
-# are a benchmark result. Without them it uses --backend mock: the *costs* are
-# still exact, because they are computed from the prompts actually built, but
-# the success rates are a property of the mock capability model and must not be
-# reported as benchmark numbers.
+# Without an API key the run uses --backend mock. The *costs* are still
+# computed from the prompts actually built, but the success rates are a
+# property of the mock capability model and must not be reported as benchmark
+# numbers.
 
 set -euo pipefail
 
@@ -55,11 +59,18 @@ die() { printf '\n\033[31mFAILED\033[0m %s\n' "$*" >&2; exit 1; }
 [[ -d "$RBM_DIR/dsynth" ]] || die "no benchmark checkout at $RBM_DIR"
 
 BACKEND_ARGS=(--backend mock)
-BACKEND_NOTE="mock backends: costs are exact, success rates are NOT benchmark results"
-if [[ -n "${ASTRA_URL:-}" ]]; then
-  BACKEND_ARGS=(--backend http --astra-url "$ASTRA_URL")
-  [[ -n "${JEV_URL:-}" ]] && BACKEND_ARGS+=(--jev-url "$JEV_URL")
-  BACKEND_NOTE="real endpoints: astra=$ASTRA_URL jev=${JEV_URL:-<unset>}"
+BACKEND_NOTE="mock backends: token counts are real, success rates are NOT benchmark results"
+if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+  BACKEND_ARGS=(--backend api --vlm-model "${VLM_MODEL:-gpt-6-astra}")
+  [[ -n "${LOCAL_POLICY_PORT:-}" ]] &&     BACKEND_ARGS+=(--local-policy-port "$LOCAL_POLICY_PORT")
+  BACKEND_NOTE="real APIs: jev-1.14 + ${VLM_MODEL:-gpt-6-astra}"
+  if [[ -z "${LOCAL_POLICY_PORT:-}" ]]; then
+    BACKEND_NOTE="$BACKEND_NOTE (fine motion still mocked; set LOCAL_POLICY_PORT)"
+  fi
+  echo "   NOTE: a real run bills your account. gpt-6-astra is \$10/\$50 per"
+  echo "         million input/output tokens and this experiment makes a few"
+  echo "         frontier calls per episode -- budget roughly \$0.10 per"
+  echo "         Astra-only episode and \$0.04 per hybrid episode."
 fi
 
 # ----------------------------------------------------------------- preflight

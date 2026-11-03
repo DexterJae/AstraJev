@@ -17,16 +17,18 @@ Two worlds:
 Two backend sets:
 
   --backend mock   Astra and Jev simulated from privileged state with the
-                   noise in config/default.yaml `mock:`. Token counts and
-                   therefore costs are the real ones.
-  --backend http   real Astra and Jev endpoints (see astraxjev/backends/*_http).
+                   noise in config/default.yaml `mock:`. Token counts, and
+                   therefore costs, are the real ones.
+  --backend api    the real hosted jev-1.14, plus a vision LLM in the Astra
+                   slot. Any OpenAI-compatible endpoint works via
+                   --vlm-base-url. Bills your account.
 
 Examples
 --------
     python scripts/run_eval.py --pipeline astra      --world fake -n 30
     python scripts/run_eval.py --pipeline astra_jev  --world fake -n 30
-    python scripts/run_eval.py --pipeline astra_jev  --world sim  -n 30 \
-        --backend http --astra-url http://localhost:9001 --jev-url http://localhost:9002
+    OPENROUTER_API_KEY=... python scripts/run_eval.py --pipeline astra_jev \
+        --world fake -n 5 --backend api --vlm-model gpt-6-astra
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ from astraxjev.pipelines import (
     EpisodeContext,
     Geometry,
 )
+from astraxjev.pipelines.astra_only import PlanCache
 from astraxjev.senses import ProprioSenses
 
 
@@ -56,14 +59,27 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pipeline", choices=["astra", "astra_jev"], required=True)
     p.add_argument("--world", choices=["fake", "sim"], default="fake")
-    p.add_argument("--backend", choices=["mock", "http"], default="mock")
+    p.add_argument("--backend", choices=["mock", "api"], default="mock",
+                   help="mock: simulated from privileged state, real token "
+                        "counts. api: the real hosted Jev plus a vision LLM in "
+                        "the Astra slot.")
+    p.add_argument("--jev-provider", choices=["openrouter", "typesafe"],
+                   default="openrouter")
+    p.add_argument("--jev-model", default=None,
+                   help="override the provider's default Jev model id")
+    p.add_argument("--vlm-model", default="claude-opus-5",
+                   help="vision LLM standing in for Astra-Global")
+    p.add_argument("--vlm-base-url", default="https://openrouter.ai/api/v1")
+    p.add_argument("--vlm-key-env", default="OPENROUTER_API_KEY")
+    p.add_argument("--local-policy-host", default="localhost")
+    p.add_argument("--local-policy-port", type=int, default=0,
+                   help="port of a RoboBenchMart policy server (octo/pi0) to "
+                        "use as Astra-Local; 0 uses the mock")
     p.add_argument("--config", default=str(ROOT / "config" / "default.yaml"))
     p.add_argument("--pricing", default=str(ROOT / "config" / "pricing.yaml"))
     p.add_argument("-n", "--num-traj", type=int, default=None)
     p.add_argument("--start-seed", type=int, default=None)
     p.add_argument("-o", "--out", default=None)
-    p.add_argument("--astra-url", default=None)
-    p.add_argument("--jev-url", default=None)
     # Overrides that the sweep script drives.
     p.add_argument("--global-every-n-ticks", type=int, default=None)
     p.add_argument("--env-id", default=None)
@@ -73,21 +89,57 @@ def parse_args(argv=None):
     p.add_argument("--video-dir", default=None)
     p.add_argument("-b", "--sim-backend", default="auto",
                    choices=["auto", "cpu", "gpu"])
+    p.add_argument("--fake-task", default="pick_to_basket",
+                   help="which task shape the toy world should model")
+    p.add_argument("--no-plan-cache", action="store_true",
+                   help="pay an Astra-Global planning call every episode")
     p.add_argument("--quiet", action="store_true")
     return p.parse_args(argv)
 
 
 def build_backends(args, cfg, oracle, rng):
-    if args.backend == "http":
-        from astraxjev.backends.astra_http import HttpAstraBackend
-        from astraxjev.backends.jev_http import HttpJevBackend
+    if args.backend == "api":
+        # Real models, as far as real models exist for this.
+        #
+        #   Jev            the actual hosted model (jev_api.py).
+        #   Astra-Global   a vision LLM standing in for it, because Astra has
+        #                  no public API or weights.
+        #   Astra-Local    a downloaded VLA policy over RoboBenchMart's own
+        #                  websocket protocol, when --local-policy-port is
+        #                  given; otherwise the mock, so the Astra arm is
+        #                  explicitly part-simulated rather than quietly so.
+        from astraxjev.backends.astra_api import (
+            CompositeAstra,
+            VlmAstraGlobal,
+            WebsocketAstraLocal,
+        )
+        from astraxjev.backends.jev_api import JevApiBackend
 
-        if not args.astra_url:
-            raise SystemExit("--backend http requires --astra-url")
-        astra = HttpAstraBackend(args.astra_url)
-        jev = HttpJevBackend(args.jev_url) if args.jev_url else None
-        if args.pipeline == "astra_jev" and jev is None:
-            raise SystemExit("--pipeline astra_jev with --backend http requires --jev-url")
+        vlm = VlmAstraGlobal(
+            model=args.vlm_model,
+            base_url=args.vlm_base_url,
+            api_key_env=args.vlm_key_env,
+        )
+        if args.local_policy_port:
+            local = WebsocketAstraLocal(
+                host=args.local_policy_host, port=args.local_policy_port
+            )
+        else:
+            from astraxjev.backends import MockAstraBackend
+
+            m = cfg["mock"]
+            local = MockAstraBackend(
+                oracle,
+                global_sigma_m=m["astra_global_sigma_m"],
+                local_sigma_m=m["astra_local_sigma_m"],
+                rng=rng,
+            )
+        astra = CompositeAstra(vlm, local)
+        jev = (
+            JevApiBackend(provider=args.jev_provider, model=args.jev_model)
+            if args.pipeline == "astra_jev"
+            else None
+        )
         return astra, jev
 
     from astraxjev.backends import MockAstraBackend, MockJevBackend
@@ -95,8 +147,8 @@ def build_backends(args, cfg, oracle, rng):
     m = cfg["mock"]
     astra = MockAstraBackend(
         oracle,
-        global_sigma_m=m["astra_global_sigma_m"],
-        local_sigma_m=m["astra_local_sigma_m"],
+        localize_sigma_m=m["astra_localize_sigma_m"],
+        act_sigma_m=m["astra_act_sigma_m"],
         rng=rng,
     )
     jev = MockJevBackend(
@@ -108,7 +160,7 @@ def build_backends(args, cfg, oracle, rng):
     return astra, jev
 
 
-def build_pipeline(args, cfg, geom, astra, jev):
+def build_pipeline(args, cfg, geom, astra, jev, plan_cache, capabilities):
     if args.pipeline == "astra":
         a = cfg["astra_only"]
         cadence = (
@@ -120,8 +172,9 @@ def build_pipeline(args, cfg, geom, astra, jev):
             astra,
             geom,
             global_every_n_ticks=cadence,
-            chunk_len=a["chunk_len"],
             max_ticks=a["max_ticks"],
+            plan_cache=plan_cache,
+            capabilities=capabilities,
         )
 
     h = cfg["astra_jev"]
@@ -131,16 +184,21 @@ def build_pipeline(args, cfg, geom, astra, jev):
         geom,
         jev_precision_threshold_mm=h["jev_precision_threshold_mm"],
         handoff_prob=h["handoff_prob"],
+        relocalize_prob=h["relocalize_prob"],
         max_align_resamples=h["max_align_resamples"],
         align_accept_score=h["align_accept_score"],
-        retract_risk_escalate=h["retract_risk_escalate"],
+        obstacle_risk_escalate=h["obstacle_risk_escalate"],
+        obstacle_attention_m=h["obstacle_attention_m"],
+        max_relocalizes_per_subgoal=h["max_relocalizes_per_subgoal"],
         max_ticks=h["max_ticks"],
+        plan_cache=plan_cache,
+        capabilities=capabilities,
     )
 
 
 # ---------------------------------------------------------------- fake world
 def run_fake(args, cfg, prices):
-    from fake_world import FakeExecutor, FakeOracle, FakeWorld
+    from fake_world import TASKS, FakeExecutor, FakeOracle, FakeWorld
 
     task = cfg["task"]
     n = args.num_traj or task["num_traj"]
@@ -148,25 +206,39 @@ def run_fake(args, cfg, prices):
     geom = Geometry(**cfg["geometry"])
     ledger = CostLedger(prices)
     outcomes = []
+    # One cache for the whole run: the decomposition for a task does not
+    # change between episodes, only the grounding does. Both pipelines use the
+    # same class, so neither gains from it.
+    plan_cache = PlanCache(enabled=not args.no_plan_cache)
+
+    if args.fake_task not in TASKS:
+        raise SystemExit(
+            f"unknown --fake-task {args.fake_task!r}; choose from {sorted(TASKS)}"
+        )
+    instruction = TASKS[args.fake_task]
 
     for i in range(n):
         seed = seed0 + i
         rng = np.random.default_rng(cfg["mock"]["seed"] + seed)
-        world = FakeWorld(rng=rng)
-        # Vary the scene the way the benchmark's test scenes do: item height,
-        # lateral offset and shelf depth all shift per seed.
-        world.target_position = world.target_position + rng.normal(0, 0.03, 3)
+        world = FakeWorld(rng=rng, task=args.fake_task)
+        # Vary the scene the way the benchmark's test scenes do.
+        jitter = rng.normal(0, 0.03, 3)
+        world.target_position = world.target_position + jitter
         world.item_position = world.target_position.copy()
-        world.neighbours = world.neighbours + rng.normal(0, 0.02, world.neighbours.shape)
+        world.hinge = world.hinge + rng.normal(0, 0.02, 3)
+        world.neighbours = world._neighbours() + rng.normal(
+            0, 0.01, world._neighbours().shape
+        )
 
         oracle = FakeOracle(world)
         astra, jev = build_backends(args, cfg, oracle, rng)
-        pipeline = build_pipeline(args, cfg, geom, astra, jev)
+        pipeline = build_pipeline(
+            args, cfg, geom, astra, jev, plan_cache, oracle.capabilities()
+        )
         executor = FakeExecutor(world, max_env_steps=task["max_horizon"])
 
-        prompt = f"move to shelf and pick {oracle.target_label()} to basket"
         ctx = EpisodeContext(
-            observe=lambda w=world, p=prompt: w.observation(p),
+            observe=lambda w=world, p=instruction: w.observation(p),
             senses=ProprioSenses(oracle),
             executor=executor,
             ledger=ledger,
@@ -178,11 +250,12 @@ def run_fake(args, cfg, prices):
             o = outcomes[-1]
             print(
                 f"[{i + 1}/{n}] seed={seed} success={o.success} "
-                f"steps={o.env_steps} phase={o.phase_reached.value} "
+                f"steps={o.env_steps} "
+                f"plan={o.subgoals_completed}/{o.subgoals_total}({o.subgoal_reached}) "
                 f"usd={o.cost_usd:.3e} astra={o.astra_calls} jev={o.jev_calls}"
                 + (f"  <- {o.failure_reason}" if o.failure_reason else "")
             )
-    return ledger, outcomes
+    return ledger, outcomes, plan_cache
 
 
 # ----------------------------------------------------------------- sim world
@@ -256,6 +329,7 @@ def run_sim(args, cfg, prices):
 
     ledger = CostLedger(prices)
     outcomes = []
+    plan_cache = PlanCache(enabled=not args.no_plan_cache)
 
     def observe(env=env, prompt_box=None):
         from astraxjev.types import Observation
@@ -282,7 +356,9 @@ def run_sim(args, cfg, prices):
         )
         oracle = ManiSkillOracle(env)
         astra, jev = build_backends(args, cfg, oracle, rng)
-        pipeline = build_pipeline(args, cfg, geom, astra, jev)
+        pipeline = build_pipeline(
+            args, cfg, geom, astra, jev, plan_cache, oracle.capabilities()
+        )
         executor = ManiSkillExecutor(env, planner, max_env_steps=task["max_horizon"])
 
         ctx = EpisodeContext(
@@ -298,7 +374,8 @@ def run_sim(args, cfg, prices):
         if not args.quiet:
             print(
                 f"[{i + 1}/{n}] seed={seed} success={o.success} "
-                f"steps={o.env_steps} phase={o.phase_reached.value} "
+                f"steps={o.env_steps} "
+                f"plan={o.subgoals_completed}/{o.subgoals_total}({o.subgoal_reached}) "
                 f"usd={o.cost_usd:.3e} astra={o.astra_calls} jev={o.jev_calls}"
                 + (f"  <- {o.failure_reason}" if o.failure_reason else "")
             )
@@ -306,7 +383,7 @@ def run_sim(args, cfg, prices):
             env.flush_video(str(seed))
 
     env.close()
-    return ledger, outcomes
+    return ledger, outcomes, plan_cache
 
 
 def main(argv=None):
@@ -316,11 +393,15 @@ def main(argv=None):
     prices = PriceTable.from_yaml(args.pricing)
 
     runner = run_fake if args.world == "fake" else run_sim
-    ledger, outcomes = runner(args, cfg, prices)
+    ledger, outcomes, plan_cache = runner(args, cfg, prices)
 
     result = summarise(args.pipeline, ledger, outcomes)
     result["world"] = args.world
     result["backend"] = args.backend
+    result["task"] = args.fake_task if args.world == "fake" else (
+        args.env_id or cfg["task"]["env_id"]
+    )
+    result.update(plan_cache.stats())
     result["config"] = cfg
     if args.global_every_n_ticks is not None:
         result["override_global_every_n_ticks"] = args.global_every_n_ticks
@@ -332,11 +413,19 @@ def main(argv=None):
 
     print()
     print(f"pipeline        {result['pipeline']}  ({args.world}/{args.backend})")
+    print(f"task            {result['task']}")
     print(f"episodes        {result['episodes']}")
     print(f"success rate    {result['success_rate']:.3f}")
+    print(f"plan progress   {result['mean_plan_progress']:.3f}")
     print(f"USD / episode   {result['usd_per_episode']:.4e}")
     print(f"USD / success   {result['usd_per_success']:.4e}")
     print(f"GFLOP / episode {result['gflops_per_episode']:.1f}")
+    prov = result["cost_provenance"]
+    print(
+        f"cost measured    {prov['fraction_measured']:.1%} of USD came from "
+        f"provider-reported usage ({prov['calls_with_provider_cost']}"
+        f"/{prov['calls_total']} calls)"
+    )
     print("calls by backend:")
     for b, agg in sorted(result["by_backend"].items()):
         print(

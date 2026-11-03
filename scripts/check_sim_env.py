@@ -179,11 +179,15 @@ def main(argv=None) -> int:
     check("ManiSkillOracle constructs", _oracle)
     if oracle is not None:
         for name, fn in [
-            ("oracle.target_position", lambda: list(oracle.target_position())),
-            ("oracle.target_extent", lambda: list(oracle.target_extent())),
-            ("oracle.shelf_normal", lambda: list(oracle.shelf_normal())),
+            ("oracle.frames() names the plan's references",
+             lambda: sorted(oracle.frames())),
+            ("oracle.frames() origins are finite",
+             lambda: _frames_finite(oracle)),
+            ("oracle.free_ref_names", lambda: list(oracle.free_ref_names())),
+            ("oracle.capabilities (env-derived tolerances)",
+             lambda: oracle.capabilities().to_dict()),
+            ("oracle.obstacles", lambda: f"{len(oracle.obstacles())} obstacles"),
             ("oracle.tcp_position", lambda: list(oracle.tcp_position())),
-            ("oracle.basket_position", lambda: list(oracle.basket_position())),
             ("oracle.nearest_neighbour_distance",
              lambda: round(oracle.nearest_neighbour_distance(), 4)),
             ("oracle.gripper_closed", lambda: oracle.gripper_closed()),
@@ -191,6 +195,11 @@ def main(argv=None) -> int:
             ("oracle.target_label", lambda: oracle.target_label()),
         ]:
             check(name, fn)
+
+        check("env declares its own success threshold",
+              lambda: _place_tolerance(u))
+        check("a plan generated for this instruction resolves",
+              lambda: _plan_resolves(u, oracle))
 
     # -- planner and executor ---------------------------------------------
     if args.no_plan:
@@ -213,16 +222,18 @@ def main(argv=None) -> int:
 
     if planner is not None and oracle is not None:
         from astraxjev.executor import ManiSkillExecutor
-        from astraxjev.geometry import standoff_waypoint
-        from astraxjev.types import GRIPPER_OPEN, TargetEstimate
+        from astraxjev.plan import GoalKind, Subgoal, resolve
 
         ex = ManiSkillExecutor(env, planner, max_env_steps=500)
-        target = TargetEstimate(
-            position=oracle.target_position(),
-            extent=oracle.target_extent(),
-            shelf_normal=oracle.shelf_normal(),
+        frames = oracle.frames()
+        wp = resolve(
+            Subgoal("approach", GoalKind.STANDOFF, "target",
+                    params={"distance": 0.18}),
+            frames,
+            tcp_position=oracle.tcp_position(),
+            anchor=None,
+            finger_length_m=0.03,
         )
-        wp = standoff_waypoint(target, 0.18)
 
         check("planner.check_IK on the standoff pose",
               lambda: planner.check_IK(
@@ -279,6 +290,54 @@ def _check_obs(u):
     if "agent" not in obs or "qpos" not in obs["agent"]:
         _raise("obs['agent']['qpos'] missing")
     return shapes
+
+
+def _frames_finite(oracle):
+    import numpy as np
+
+    frames = oracle.frames()
+    if not frames:
+        _raise("frames() returned nothing; a plan could not be grounded")
+    for name, f in frames.items():
+        if not np.all(np.isfinite(f.origin)):
+            _raise(f"{name}.origin is not finite: {f.origin}")
+        if abs(float(np.linalg.norm(f.normal)) - 1.0) > 1e-3:
+            _raise(f"{name}.normal is not a unit vector: {f.normal}")
+    return f"{len(frames)} frames: {sorted(frames)}"
+
+
+def _place_tolerance(u):
+    """The task's own success threshold replaces a hand-chosen number."""
+    thresh = getattr(u, "TARGET_POS_THRESH", None)
+    if thresh is None:
+        _raise(
+            "env has no TARGET_POS_THRESH; plan.calibrate will fall back to "
+            "its default place tolerance instead of the task's own"
+        )
+    return f"TARGET_POS_THRESH={float(thresh)}"
+
+
+def _plan_resolves(u, oracle):
+    """Every reference a generated plan names must be groundable here.
+
+    The planner is asked for a decomposition from the instruction; if it names
+    something perception cannot supply, episodes fail on the first tick. Better
+    to find that out now.
+    """
+    from astraxjev.backends.astra_mock import synthesise_plan
+    from astraxjev.plan import calibrate
+
+    instruction = u.language_instructions[0]
+    plan = calibrate(synthesise_plan(instruction), oracle.capabilities())
+    available = set(oracle.frames()) | set(oracle.free_ref_names())
+    missing = [r for r in plan.required_refs if r not in available]
+    if missing:
+        _raise(
+            f"plan for {instruction!r} needs refs {missing} which this env "
+            f"cannot ground (has {sorted(available)}); add them to "
+            "ManiSkillOracle.frames()"
+        )
+    return f"{len(plan)} subgoals, refs {list(plan.required_refs)} all groundable"
 
 
 def _build_grasp_pose(u):

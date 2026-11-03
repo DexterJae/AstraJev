@@ -1,0 +1,438 @@
+{
+  "pipeline": "astra",
+  "episodes": 20,
+  "successes": 12,
+  "success_rate": 0.6,
+  "total_usd": 1.9121869999999999,
+  "usd_per_episode": 0.09560935,
+  "usd_per_success": 0.15934891666666665,
+  "total_gflops": 253614000.0,
+  "gflops_per_episode": 12680700.0,
+  "gflops_per_success": 21134500.0,
+  "mean_env_steps": 201.35,
+  "mean_plan_progress": 1.0,
+  "by_backend": {
+    "astra": {
+      "calls": 180,
+      "forward_passes": 180,
+      "tokens_in": 100969,
+      "tokens_out": 25838,
+      "cached_in": 43267,
+      "usd": 1.9121870000000036,
+      "gflops": 253614000.0,
+      "wall_ms": 344400.0
+    }
+  },
+  "by_subgoal": {
+    "plan": {
+      "calls": 1,
+      "forward_passes": 1,
+      "tokens_in": 730,
+      "tokens_out": 410,
+      "cached_in": 394,
+      "usd": 0.024254,
+      "gflops": 2280000.0,
+      "wall_ms": 4200.0
+    },
+    "approach_item": {
+      "calls": 47,
+      "forward_passes": 47,
+      "tokens_in": 26904,
+      "tokens_out": 7564,
+      "cached_in": 11669,
+      "usd": 0.5422190000000001,
+      "gflops": 68936000.0,
+      "wall_ms": 90600.0
+    },
+    "align_to_item": {
+      "calls": 72,
+      "forward_passes": 72,
+      "tokens_in": 39753,
+      "tokens_out": 9364,
+      "cached_in": 16844,
+      "usd": 0.7141340000000004,
+      "gflops": 98234000.0,
+      "wall_ms": 135600.0
+    },
+    "extract": {
+      "calls": 38,
+      "forward_passes": 38,
+      "tokens_in": 22000,
+      "tokens_out": 6498,
+      "cached_in": 9612,
+      "usd": 0.45839200000000024,
+      "gflops": 56996000.0,
+      "wall_ms": 73800.0
+    },
+    "over_goal_site": {
+      "calls": 22,
+      "forward_passes": 22,
+      "tokens_in": 11582,
+      "tokens_out": 2002,
+      "cached_in": 4748,
+      "usd": 0.17318799999999995,
+      "gflops": 27168000.0,
+      "wall_ms": 40200.0
+    }
+  },
+  "by_op": {
+    "plan_task": {
+      "calls": 1,
+      "forward_passes": 1,
+      "tokens_in": 730,
+      "tokens_out": 410,
+      "cached_in": 394,
+      "usd": 0.024254,
+      "gflops": 2280000.0,
+      "wall_ms": 4200.0
+    },
+    "localize": {
+      "calls": 60,
+      "forward_passes": 60,
+      "tokens_in": 39060,
+      "tokens_out": 16860,
+      "cached_in": 18240,
+      "usd": 1.069439999999999,
+      "gflops": 111840000.0,
+      "wall_ms": 126000.0
+    },
+    "act_fine": {
+      "calls": 119,
+      "forward_passes": 119,
+      "tokens_in": 61179,
+      "tokens_out": 8568,
+      "cached_in": 24633,
+      "usd": 0.8184930000000014,
+      "gflops": 139494000.0,
+      "wall_ms": 214200.0
+    }
+  },
+  "latency": {
+    "astra": {
+      "p50_ms": 1800.0,
+      "p95_ms": 2100.0,
+      "mean_ms": 1913.3333333333333
+    },
+    "jev": {}
+  },
+  "usd_per_episode_spread": {
+    "min": 0.08785699999999999,
+    "max": 0.12586499999999998
+  },
+  "prices": {
+    "astra": {
+      "name": "astra",
+      "params_b": 1000.0,
+      "usd_per_mtok_in": 10.0,
+      "usd_per_mtok_out": 50.0,
+      "provenance": "PUBLISHED. OpenAI gpt-6-astra standard tier, read 2026-11: $10 per million input tokens, $50 per million output tokens, $1 per million cached input tokens, for prompts up to 272K input tokens. Batch and Flex halve these; Fast mode doubles them. Output costs 5x input, so the number of Astra *responses* dominates this pipeline's bill, not the number of images. params_b is a GUESS -- the parameter count is not published -- so treat the GFLOPs figure, unlike the dollar figure, as an assumption.",
+      "usd_per_mtok_cached_in": 1.0,
+      "usd_per_call": 0.0
+    },
+    "jev": {
+      "name": "jev",
+      "params_b": 2.0,
+      "usd_per_mtok_in": 0.042,
+      "usd_per_mtok_out": 0.0,
+      "provenance": "PUBLISHED. TypeSafe jev-1.14, read 2026-11: $0.042 per million input tokens, output tokens free, consistent with the model generating no tokens and answering every question in one shared read of the state. Reachable at https://openrouter.ai/api/alpha/decisions (model typesafe/jev-1.14) or https://api.typesafe.ai/v1/systemone (waitlisted). params_b is a GUESS; the weights are closed.",
+      "usd_per_mtok_cached_in": 0.042,
+      "usd_per_call": 0.0
+    }
+  },
+  "cost_provenance": {
+    "calls_total": 180,
+    "calls_with_provider_cost": 0,
+    "usd_total": 1.9121869999999999,
+    "usd_from_provider": 0,
+    "usd_from_assumptions": 1.9121869999999999,
+    "fraction_measured": 0.0,
+    "max_abs_price_drift_usd": 0.0
+  },
+  "outcomes": [
+    {
+      "seed": 0,
+      "success": false,
+      "env_steps": 196,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.125865,
+      "astra_calls": 11,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 1,
+      "success": true,
+      "env_steps": 203,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.08785699999999999,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 2,
+      "success": true,
+      "env_steps": 205,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.094734,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 3,
+      "success": false,
+      "env_steps": 198,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.087897,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 4,
+      "success": true,
+      "env_steps": 200,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.08785699999999999,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 5,
+      "success": true,
+      "env_steps": 205,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.094744,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 6,
+      "success": true,
+      "env_steps": 208,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.094734,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 7,
+      "success": true,
+      "env_steps": 206,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.10161099999999999,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 8,
+      "success": false,
+      "env_steps": 194,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.08785699999999999,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 9,
+      "success": true,
+      "env_steps": 206,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.10161099999999999,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 10,
+      "success": false,
+      "env_steps": 198,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.094734,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 11,
+      "success": true,
+      "env_steps": 200,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.08785699999999999,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 12,
+      "success": false,
+      "env_steps": 192,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.08785699999999999,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 13,
+      "success": true,
+      "env_steps": 212,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.101671,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 14,
+      "success": true,
+      "env_steps": 211,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.101631,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 15,
+      "success": true,
+      "env_steps": 203,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.094734,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 16,
+      "success": false,
+      "env_steps": 191,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.094734,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 17,
+      "success": false,
+      "env_steps": 197,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.08785699999999999,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 18,
+      "success": true,
+      "env_steps": 209,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.10161099999999999,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 19,
+      "success": false,
+      "env_steps": 193,
+      "subgoal_reached": "done",
+      "subgoals_completed": 7,
+      "subgoals_total": 7,
+      "cost_usd": 0.094734,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    }
+  ],
+  "world": "fake",
+  "backend": "mock",
+  "task": "board_to_board",
+  "plan_cache_hits": 19,
+  "plan_cache_misses": 1,
+  "config": {
+    "task": {
+      "env_id": "PickToBasketContNiveaEnv",
+      "scene_dir": "demo_envs/test_unseen_items_pick_to_basket",
+      "robot_uids": "ds_fetch_basket",
+      "control_mode": "pd_joint_pos",
+      "num_traj": 30,
+      "start_seed": 0,
+      "max_horizon": 500
+    },
+    "geometry": {
+      "coarse_step_scale": 4.0,
+      "coarse_step_min_m": 0.05,
+      "coarse_step_max_m": 0.3,
+      "finger_length_m": 0.03,
+      "handoff_radius_m": 0.06
+    },
+    "astra_only": {
+      "global_every_n_ticks": 4,
+      "max_ticks": 160
+    },
+    "astra_jev": {
+      "jev_precision_threshold_mm": 20.0,
+      "handoff_prob": 0.75,
+      "relocalize_prob": 0.6,
+      "max_align_resamples": 2,
+      "align_accept_score": 0.5,
+      "obstacle_risk_escalate": 0.5,
+      "obstacle_attention_m": 0.15,
+      "max_relocalizes_per_subgoal": 2,
+      "max_ticks": 200
+    },
+    "mock": {
+      "astra_localize_sigma_m": 0.025,
+      "astra_act_sigma_m": 0.004,
+      "jev_choice_accuracy": 0.88,
+      "jev_noul_noise": 0.08,
+      "seed": 0
+    }
+  }
+}

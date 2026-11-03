@@ -13,7 +13,10 @@ assets/
 demo_envs/
 generated_envs/
 
-# Run artefacts: the two canonical results JSONs are committed, these are not
+# Run artefacts. Committed: results/astra.json, results/astra_jev.json and the
+# per-task matrix the README quotes. Not committed: sweep intermediates, sim
+# runs (machine specific) and videos.
 results/sweep_*
 results/sim_*
 results/videos/
+results/_cfg_*

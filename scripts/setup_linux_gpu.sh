@@ -163,6 +163,11 @@ cat <<EOF
    venv:    $VENV
    scenes:  $SCENES
 
-   next:    bash scripts/run_sim_experiment.sh
-            bash scripts/run_sim_experiment.sh --smoke     # 2 episodes first
+   next:    bash scripts/run_sim_experiment.sh --smoke     # 2 episodes first
+            bash scripts/run_sim_experiment.sh
+            bash scripts/run_all_tasks.sh --world sim      # generality matrix
+
+   real models (bills your account):
+            export OPENROUTER_API_KEY=...
+            bash scripts/run_sim_experiment.sh --smoke
 EOF

@@ -1,8 +1,19 @@
-"""Astra vs Astra+Jev on a RoboBenchMart gripper task.
+"""Astra vs Astra+Jev on RoboBenchMart gripper tasks.
 
-Two pipelines solve the same PickToBasket episode with the mobile base locked,
-through the same phase machine and the same low-level executor, so that the
-only difference between them is which model makes each decision and how often.
+Two pipelines execute the same generated task plan with the mobile base
+locked, through the same low-level executor, so the only difference between
+them is which model makes each decision and how often an expensive one runs.
 """
 
-__all__ = ["cost", "geometry", "pipelines", "prompts", "tokens", "types", "verbalize"]
+__all__ = [
+    "cost",
+    "geometry",
+    "oracle",
+    "pipelines",
+    "plan",
+    "prompts",
+    "senses",
+    "tokens",
+    "types",
+    "verbalize",
+]
