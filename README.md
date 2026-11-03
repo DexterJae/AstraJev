@@ -22,17 +22,17 @@ Toy world, 30 episodes, mock backends, default configuration:
 | metric | `astra` | `astra_jev` | delta |
 |---|---|---|---|
 | success rate | 0.967 | 0.967 | +0.0% |
-| USD / episode | 6.040e-04 | 3.698e-04 | **-38.8%** |
-| USD / successful episode | 6.248e-04 | 3.826e-04 | **-38.8%** |
-| GFLOP / episode | 27,366 | 20,482 | **-25.2%** |
+| USD / episode | 6.040e-04 | 3.819e-04 | **-36.8%** |
+| USD / successful episode | 6.248e-04 | 3.951e-04 | **-36.8%** |
+| GFLOP / episode | 27,366 | 21,367 | **-21.9%** |
 | Astra-Global calls / episode | 3.17 | **1.00** | -68.4% |
 | Astra-Local calls / episode | 6.47 | 3.47 | -46.4% |
-| Jev calls / episode | 0 | 15.27 | — |
-| detector calls / episode | 0 | 13.20 | — |
+| Jev calls / episode | 0 | 16.53 | — |
+| detector calls / episode | 0 | 14.47 | — |
 
 **The headline number is not the result. This is:**
 
-> On this task, adding Jev pays for itself only above **≈1.6 Astra-Global
+> On this task, adding Jev pays for itself only above **≈1.62 Astra-Global
 > re-localisations per episode**. Below that rate, plain Astra is cheaper — the
 > Jev and detector ticks cost more than the Astra-Global calls they avoid.
 
@@ -47,7 +47,7 @@ the sweep makes that explicit:
 | every 8 ticks | 1.63 | 3.784e-04 |
 | once per episode | 1.00 | **2.768e-04** |
 
-`astra_jev` sits at 3.73e-04–5.31e-04 depending on its own coarse-step knob. So
+`astra_jev` sits at 3.77e-04–5.51e-04 depending on its own coarse-step knob. So
 against an Astra baseline that localises **once** and never again, the hybrid
 **loses**. The claim is real but conditional, and the condition is empirical:
 *how often must Astra-Global re-localise under real occlusion and clutter?*
@@ -56,8 +56,8 @@ measure it.
 
 Two further sensitivities, both reported by `scripts/sweep_pricing.py`:
 
-* break-even Jev **price**: 0.134 USD/Mtok, i.e. 2.7x the assumed 0.05.
-* break-even Jev **size**: 3.2 B params, i.e. 1.6x the assumed 2 B — because
+* break-even Jev **price**: 0.124 USD/Mtok, i.e. 2.5x the assumed 0.05.
+* break-even Jev **size**: 3.0 B params, i.e. 1.5x the assumed 2 B — because
   the hybrid replaces cheap 0.15 B Astra-Local ticks with larger Jev ticks, so
   it can be cheaper in dollars and dearer in FLOPs.
 
