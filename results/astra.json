@@ -1,0 +1,505 @@
+{
+  "pipeline": "astra",
+  "episodes": 30,
+  "successes": 29,
+  "success_rate": 0.9666666666666667,
+  "total_usd": 0.01811946,
+  "usd_per_episode": 0.000603982,
+  "usd_per_success": 0.0006248089655172414,
+  "total_gflops": 820986.9,
+  "gflops_per_episode": 27366.23,
+  "gflops_per_success": 28309.893103448278,
+  "mean_env_steps": 234.3,
+  "by_backend": {
+    "astra_global": {
+      "calls": 95,
+      "forward_passes": 95,
+      "tokens_in": 45695,
+      "tokens_out": 9310,
+      "usd": 0.014725000000000025,
+      "gflops": 770070.0,
+      "wall_ms": 39900.0
+    },
+    "astra_local": {
+      "calls": 194,
+      "forward_passes": 194,
+      "tokens_in": 169723,
+      "tokens_out": 0,
+      "usd": 0.0033944600000000084,
+      "gflops": 50916.89999999998,
+      "wall_ms": 6790.0
+    }
+  },
+  "by_phase": {
+    "locate": {
+      "calls": 30,
+      "forward_passes": 30,
+      "tokens_in": 14430,
+      "tokens_out": 2940,
+      "usd": 0.004650000000000001,
+      "gflops": 243180.0,
+      "wall_ms": 12600.0
+    },
+    "approach": {
+      "calls": 30,
+      "forward_passes": 30,
+      "tokens_in": 26262,
+      "tokens_out": 0,
+      "usd": 0.00052524,
+      "gflops": 7878.599999999999,
+      "wall_ms": 1050.0
+    },
+    "align": {
+      "calls": 139,
+      "forward_passes": 139,
+      "tokens_in": 107868,
+      "tokens_out": 3430,
+      "usd": 0.007245660000000007,
+      "gflops": 311019.9,
+      "wall_ms": 18340.0
+    },
+    "retract": {
+      "calls": 51,
+      "forward_passes": 51,
+      "tokens_in": 36361,
+      "tokens_out": 2058,
+      "usd": 0.0037802000000000035,
+      "gflops": 178104.0,
+      "wall_ms": 9870.0
+    },
+    "place": {
+      "calls": 39,
+      "forward_passes": 39,
+      "tokens_in": 30497,
+      "tokens_out": 882,
+      "usd": 0.0019183600000000002,
+      "gflops": 80804.4,
+      "wall_ms": 4830.0
+    }
+  },
+  "by_op": {
+    "localize": {
+      "calls": 95,
+      "forward_passes": 95,
+      "tokens_in": 45695,
+      "tokens_out": 9310,
+      "usd": 0.014725000000000025,
+      "gflops": 770070.0,
+      "wall_ms": 39900.0
+    },
+    "plan_local": {
+      "calls": 194,
+      "forward_passes": 194,
+      "tokens_in": 169723,
+      "tokens_out": 0,
+      "usd": 0.0033944600000000084,
+      "gflops": 50916.89999999998,
+      "wall_ms": 6790.0
+    }
+  },
+  "latency": {
+    "astra_global": {
+      "p50_ms": 420.0,
+      "p95_ms": 420.0,
+      "mean_ms": 420.0
+    },
+    "astra_local": {
+      "p50_ms": 35.0,
+      "p95_ms": 35.0,
+      "mean_ms": 35.0
+    },
+    "detector": {},
+    "jev": {}
+  },
+  "usd_per_episode_spread": {
+    "min": 0.00055244,
+    "max": 0.00077744
+  },
+  "prices": {
+    "astra_global": {
+      "name": "astra_global",
+      "params_b": 7.0,
+      "usd_per_mtok_in": 0.2,
+      "usd_per_mtok_out": 0.6,
+      "provenance": "ASSUMED. Astra-Global is described as a multimodal LLM (arXiv:2506.06205) but weights and serving cost are not published. Priced as a generic open-weight 7B-class VLM at commodity inference-provider rates (2026-11). Output tokens cost 3x input, the usual decode/prefill ratio.",
+      "usd_per_call": 0.0
+    },
+    "astra_local": {
+      "name": "astra_local",
+      "params_b": 0.15,
+      "usd_per_mtok_in": 0.02,
+      "usd_per_mtok_out": 0.02,
+      "provenance": "ASSUMED. Astra-Local is a small multitask network with a 4D spatial-temporal encoder (arXiv:2506.06205); treated as a ~150M-param model. Cheap but not free, and it is called at every replan tick, so it is counted explicitly rather than dropped.",
+      "usd_per_call": 0.0
+    },
+    "jev": {
+      "name": "jev",
+      "params_b": 2.0,
+      "usd_per_mtok_in": 0.05,
+      "usd_per_mtok_out": 0.0,
+      "provenance": "ASSUMED, and the weakest assumption in the comparison. arXiv:2610.11692 states Jev answers all questions in a single forward pass and generates no tokens, so usd_per_mtok_out is set to 0 and only the prompt is charged. Size is a guess. Run scripts/sweep_pricing.py to find the break-even Jev price before claiming a cost reduction.",
+      "usd_per_call": 0.0
+    },
+    "detector": {
+      "name": "detector",
+      "params_b": 0.1,
+      "usd_per_mtok_in": 0.01,
+      "usd_per_mtok_out": 0.0,
+      "provenance": "ASSUMED. Stands in for the cheap open-vocabulary detector + proprioception that produces the coarse symbolic state Jev reads, since Jev takes text and not pixels. Charged on every hybrid decision tick so the hybrid is not credited with free perception.",
+      "usd_per_call": 0.0
+    }
+  },
+  "outcomes": [
+    {
+      "seed": 0,
+      "success": true,
+      "env_steps": 233,
+      "phase_reached": "done",
+      "cost_usd": 0.00055244,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 1,
+      "success": true,
+      "env_steps": 236,
+      "phase_reached": "done",
+      "cost_usd": 0.00075994,
+      "astra_calls": 12,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 2,
+      "success": true,
+      "env_steps": 238,
+      "phase_reached": "done",
+      "cost_usd": 0.00077744,
+      "astra_calls": 13,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 3,
+      "success": true,
+      "env_steps": 245,
+      "phase_reached": "done",
+      "cost_usd": 0.00057028,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 4,
+      "success": true,
+      "env_steps": 233,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 5,
+      "success": true,
+      "env_steps": 228,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 6,
+      "success": true,
+      "env_steps": 234,
+      "phase_reached": "done",
+      "cost_usd": 0.00058744,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 7,
+      "success": true,
+      "env_steps": 232,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 8,
+      "success": true,
+      "env_steps": 220,
+      "phase_reached": "done",
+      "cost_usd": 0.00057018,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 9,
+      "success": true,
+      "env_steps": 230,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 10,
+      "success": true,
+      "env_steps": 223,
+      "phase_reached": "done",
+      "cost_usd": 0.00055244,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 11,
+      "success": true,
+      "env_steps": 233,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 12,
+      "success": true,
+      "env_steps": 232,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 13,
+      "success": false,
+      "env_steps": 247,
+      "phase_reached": "done",
+      "cost_usd": 0.00055272,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 14,
+      "success": true,
+      "env_steps": 243,
+      "phase_reached": "done",
+      "cost_usd": 0.00075994,
+      "astra_calls": 12,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 15,
+      "success": true,
+      "env_steps": 229,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 16,
+      "success": true,
+      "env_steps": 234,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 17,
+      "success": true,
+      "env_steps": 244,
+      "phase_reached": "done",
+      "cost_usd": 0.00058744,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 18,
+      "success": true,
+      "env_steps": 233,
+      "phase_reached": "done",
+      "cost_usd": 0.00055244,
+      "astra_calls": 8,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 19,
+      "success": true,
+      "env_steps": 239,
+      "phase_reached": "done",
+      "cost_usd": 0.00077744,
+      "astra_calls": 13,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 20,
+      "success": true,
+      "env_steps": 236,
+      "phase_reached": "done",
+      "cost_usd": 0.00058744,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 21,
+      "success": true,
+      "env_steps": 235,
+      "phase_reached": "done",
+      "cost_usd": 0.00058744,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 22,
+      "success": true,
+      "env_steps": 226,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 23,
+      "success": true,
+      "env_steps": 236,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 24,
+      "success": true,
+      "env_steps": 241,
+      "phase_reached": "done",
+      "cost_usd": 0.00058744,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 25,
+      "success": true,
+      "env_steps": 234,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 26,
+      "success": true,
+      "env_steps": 228,
+      "phase_reached": "done",
+      "cost_usd": 0.00057028,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 27,
+      "success": true,
+      "env_steps": 247,
+      "phase_reached": "done",
+      "cost_usd": 0.00075994,
+      "astra_calls": 12,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 28,
+      "success": true,
+      "env_steps": 228,
+      "phase_reached": "done",
+      "cost_usd": 0.00056994,
+      "astra_calls": 9,
+      "jev_calls": 0,
+      "failure_reason": ""
+    },
+    {
+      "seed": 29,
+      "success": true,
+      "env_steps": 232,
+      "phase_reached": "done",
+      "cost_usd": 0.0005875,
+      "astra_calls": 10,
+      "jev_calls": 0,
+      "failure_reason": ""
+    }
+  ],
+  "world": "fake",
+  "backend": "mock",
+  "config": {
+    "task": {
+      "env_id": "PickToBasketContNiveaEnv",
+      "scene_dir": "demo_envs/test_unseen_items_pick_to_basket",
+      "robot_uids": "ds_fetch_basket",
+      "control_mode": "pd_joint_pos",
+      "num_traj": 30,
+      "start_seed": 0,
+      "max_horizon": 500,
+      "freeze_base": true,
+      "freeze_head": true
+    },
+    "geometry": {
+      "standoff_m": 0.18,
+      "coarse_step_scale": 4.0,
+      "coarse_step_min_m": 0.05,
+      "coarse_step_max_m": 0.3,
+      "handoff_radius_m": 0.06,
+      "retract_m": 0.3,
+      "finger_length_m": 0.03,
+      "basket_release_offset_m": [
+        0.05,
+        0.0,
+        0.4
+      ],
+      "pre_place_lift_m": 0.3
+    },
+    "astra_only": {
+      "global_every_n_ticks": 4,
+      "chunk_len": 1,
+      "max_ticks": 120
+    },
+    "astra_jev": {
+      "jev_precision_threshold_mm": 20.0,
+      "handoff_prob": 0.75,
+      "max_align_resamples": 2,
+      "align_accept_score": 0.5,
+      "retract_risk_escalate": 0.5,
+      "max_ticks": 160
+    },
+    "mock": {
+      "astra_global_sigma_m": 0.025,
+      "astra_local_sigma_m": 0.004,
+      "jev_choice_accuracy": 0.88,
+      "jev_noul_noise": 0.08,
+      "detector_sigma_m": 0.02,
+      "seed": 0
+    }
+  }
+}

@@ -1,0 +1,20 @@
+# Core: enough to run the pipelines, the cost ledger and the tests.
+numpy>=1.24
+pyyaml>=6.0
+pytest>=7.4
+
+# Optional, for exact BPE token counts instead of the deterministic estimate
+# in astraxjev/tokens.py. Costs change by a few percent with it installed.
+# tiktoken>=0.7
+
+# Optional, only for the real-backend HTTP adapters (image encoding).
+# pillow>=10.0
+
+# The sim path (--world sim) additionally needs the RoboBenchMart stack, which
+# is Linux + Vulkan + GPU only and is NOT installed by this file:
+#   git clone https://github.com/emb-ai/RoboBenchMart
+#   pip install -r RoboBenchMart/requirements.txt
+#   pip install mplib==0.2.1
+#   python -m mani_skill.utils.download_asset RoboCasa
+#   hf download emb-ai/RoboBenchMart_assets     --repo-type dataset --local-dir assets
+#   hf download emb-ai/RoboBenchMart_demo_envs  --repo-type dataset --local-dir demo_envs

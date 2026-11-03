@@ -1,0 +1,19 @@
+# Local python environments
+.venv/
+.venv-sim/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Upstream benchmark, cloned by scripts/setup_linux_gpu.sh
+RoboBenchMart/
+
+# Downloaded assets and generated scenes
+assets/
+demo_envs/
+generated_envs/
+
+# Run artefacts: the two canonical results JSONs are committed, these are not
+results/sweep_*
+results/sim_*
+results/videos/

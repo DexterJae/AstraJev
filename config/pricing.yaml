@@ -1,0 +1,60 @@
+# Unit prices for the cost comparison.
+#
+# IMPORTANT — read before quoting any dollar figure from this repo.
+#
+# The *work* (number of calls, tokens in/out, forward passes) is measured by
+# astraxjev/cost.py from the prompts the pipelines actually construct.  The
+# prices below are assumptions, and each carries a `provenance` string that is
+# copied verbatim into every results JSON.  Jev's real serving price is not
+# public, so the headline claim must be reported together with
+# scripts/sweep_pricing.py, which shows over what range of Jev prices the
+# claim survives.
+#
+# params_b is used for the vendor-independent GFLOPs figure (2*N*tokens),
+# which is the number to lead with if you do not want to defend a price sheet.
+
+models:
+  astra_global:
+    params_b: 7.0
+    usd_per_mtok_in: 0.20
+    usd_per_mtok_out: 0.60
+    usd_per_call: 0.0
+    provenance: >-
+      ASSUMED. Astra-Global is described as a multimodal LLM (arXiv:2506.06205)
+      but weights and serving cost are not published. Priced as a generic
+      open-weight 7B-class VLM at commodity inference-provider rates
+      (2026-11). Output tokens cost 3x input, the usual decode/prefill ratio.
+
+  astra_local:
+    params_b: 0.15
+    usd_per_mtok_in: 0.02
+    usd_per_mtok_out: 0.02
+    usd_per_call: 0.0
+    provenance: >-
+      ASSUMED. Astra-Local is a small multitask network with a 4D
+      spatial-temporal encoder (arXiv:2506.06205); treated as a ~150M-param
+      model. Cheap but not free, and it is called at every replan tick, so it
+      is counted explicitly rather than dropped.
+
+  jev:
+    params_b: 2.0
+    usd_per_mtok_in: 0.05
+    usd_per_mtok_out: 0.0
+    usd_per_call: 0.0
+    provenance: >-
+      ASSUMED, and the weakest assumption in the comparison. arXiv:2610.11692
+      states Jev answers all questions in a single forward pass and generates
+      no tokens, so usd_per_mtok_out is set to 0 and only the prompt is
+      charged. Size is a guess. Run scripts/sweep_pricing.py to find the
+      break-even Jev price before claiming a cost reduction.
+
+  detector:
+    params_b: 0.1
+    usd_per_mtok_in: 0.01
+    usd_per_mtok_out: 0.0
+    usd_per_call: 0.0
+    provenance: >-
+      ASSUMED. Stands in for the cheap open-vocabulary detector + proprioception
+      that produces the coarse symbolic state Jev reads, since Jev takes text
+      and not pixels. Charged on every hybrid decision tick so the hybrid is
+      not credited with free perception.
