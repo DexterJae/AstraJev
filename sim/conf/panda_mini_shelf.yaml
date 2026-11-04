@@ -1,0 +1,41 @@
+# Scene for the stationary-Panda setup: one active RoboBenchMart mini shelf
+# (fixtures.small_shelf_two_sided = store_mini_shelf_two_sided.glb) in a small
+# store room. Copy into RoboBenchMart/conf/ds_continuous/ before generating (see sim/README.md).
+defaults:
+  - config
+  - _self_
+
+name: 'panda_mini_shelf'
+output_dir: generated_envs/panda_mini_shelf
+rewrite: true
+size_x: 10
+size_y: 8
+num_scenes: 2
+num_workers: 1
+random_seed: 2026
+
+active_shelvings_list:
+  - name: 'mini_shelf'
+    filling_type: BOARDWISE_COLUMNS
+    x_gap: 0.06
+    y_gap: 0.04
+    delta_x: 0.1
+    shelf_asset: fixtures.small_shelf_two_sided
+    shelf_type: SMALL_SHELF_TWO_SIDED
+    shuffle_boards: false
+    shuffle_items_on_board: true
+    board_product_numcol:
+      0:
+        food.HOUSEHOLD.AceDetergent: 2
+        food.BEER.DuffBeerCan: 4
+      1:
+        food.HYGIENE.NiveaBodyMilk: 3
+        food.CRACKERS_COOKIES.BananiaCookies: 2
+      2:
+        food.CEREALS.NestleHoneyStars: 2
+        food.DRINKS_SODA.FantaSaborNaranja2L: 2
+      3:
+        food.drinks.coffeePackaging: 3
+        food.CRACKERS_COOKIES.OreoLemonCremeSandwichCookies: 2
+      4:
+        food.ENERGY_DRINKS.MonsterEnergyDrink: 4

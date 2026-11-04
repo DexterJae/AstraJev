@@ -131,3 +131,38 @@ class ManiSkillExecutor:
                 )
             except (TypeError, AttributeError, IndexError):
                 self._terminated = bool(terminated) or bool(truncated)
+
+
+class PandaExecutor(ManiSkillExecutor):
+    """Same contract, for the stationary Panda on a pedestal (sim/panda_pedestal_env.py).
+
+    Drives sim/panda_planner.py (mplib 0.2.1, collision-aware against the live
+    scene, base pose set to the pedestal top). Screw motion first, RRTConnect
+    as the fallback -- the same order as the Fetch solver's static_manipulation. The Panda has no base joints
+    at all, so "no mobile manipulation" holds by construction, and no torso: a
+    plan's torso lift is skipped and logged, not faked.
+    """
+
+    def __init__(self, env, planner, *, max_env_steps: int = 500) -> None:
+        super().__init__(env, planner, max_env_steps=max_env_steps)
+        self.skipped_torso_lifts = 0
+
+    def execute(self, wp: Waypoint) -> ExecResult:
+        before = self.env_steps
+        if abs(wp.torso_delta) > 1e-4:
+            self.skipped_torso_lifts += 1
+        pose = self.env.unwrapped.agent.build_grasp_pose(
+            np.asarray(wp.approach, float), np.asarray(wp.closing, float),
+            np.asarray(wp.position, float),
+        )
+        res = self.planner.move_to_pose_with_screw(pose)
+        if res == -1:
+            res = self.planner.move_to_pose_with_RRTConnect(pose)
+        if res == -1:
+            return ExecResult(False, self.env_steps - before, "motion plan failed")
+        self._absorb(res)
+        return ExecResult(True, self.env_steps - before)
+
+    def lift(self, delta_m: float) -> ExecResult:
+        self.skipped_torso_lifts += 1
+        return ExecResult(True, 0, "no torso on panda; lift skipped")

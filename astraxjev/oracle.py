@@ -164,8 +164,9 @@ class ManiSkillOracle:
             # The task's own success threshold, declared by the environment.
             place_tolerance_m=float(getattr(env, "TARGET_POS_THRESH", 0.2)),
             finger_length_m=0.03,
-            # Fetch's parallel gripper stroke, from its URDF joint limits.
-            gripper_stroke_m=0.1,
+            # Parallel-gripper stroke from the URDF joint limits:
+            # Fetch 2 x 0.05 m, Panda 2 x 0.04 m.
+            gripper_stroke_m=0.08 if "panda" in str(getattr(env, "robot_uids", "")) else 0.1,
             neighbour_gap_m=self.neighbour_gap(),
             item_width_m=float(np.min(extent[:2])),
         )

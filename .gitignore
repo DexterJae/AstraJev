@@ -1,6 +1,7 @@
 # Local python environments
 .venv/
 .venv-sim/
+.venv-sim
 __pycache__/
 *.pyc
 .pytest_cache/

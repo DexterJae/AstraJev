@@ -1,0 +1,41 @@
+# Same as pricing.yaml except the Astra slot is priced as gpt-6-sol.
+# Unit prices for the cost comparison.
+#
+# Both models are real, hosted, callable APIs, so unlike the first version of
+# this file these are published rates rather than guesses. Each still carries a
+# `provenance` string that is copied verbatim into every results JSON.
+#
+# When the pipelines run with --backend api, these numbers are not even used
+# for the dollar figure: both providers return their own usage/cost and the
+# ledger records that as authoritative, keeping the locally computed figure
+# alongside so a divergence is visible. They are still used for the
+# vendor-independent GFLOPs figure, which remains an assumption because
+# neither model's parameter count is published.
+
+models:
+  astra:
+    params_b: 1000.0
+    usd_per_mtok_in: 2.0
+    usd_per_mtok_out: 10.0
+    usd_per_mtok_cached_in: 0.2
+    usd_per_call: 0.0
+    provenance: >-
+      gpt-6-sol standing in for gpt-6-astra (connection test, not the
+      experiment). $2 / $10 per million input / output tokens from the
+      OpenRouter model listing (openai/gpt-6-sol), read 2026-11-03. The cached
+      rate is ASSUMED at 1/10 of input, by analogy with gpt-6-astra, and is
+      not verified. params_b is a GUESS.
+
+  jev:
+    params_b: 2.0
+    usd_per_mtok_in: 0.042
+    usd_per_mtok_out: 0.0
+    usd_per_mtok_cached_in: 0.042
+    usd_per_call: 0.0
+    provenance: >-
+      PUBLISHED. TypeSafe jev-1.14, read 2026-11: $0.042 per million input
+      tokens, output tokens free, consistent with the model generating no
+      tokens and answering every question in one shared read of the state.
+      Reachable at https://openrouter.ai/api/alpha/decisions (model
+      typesafe/jev-1.14) or https://api.typesafe.ai/v1/systemone (waitlisted).
+      params_b is a GUESS; the weights are closed.

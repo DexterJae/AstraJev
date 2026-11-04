@@ -34,6 +34,7 @@ Examples
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -67,10 +68,11 @@ def parse_args(argv=None):
                    default="openrouter")
     p.add_argument("--jev-model", default=None,
                    help="override the provider's default Jev model id")
-    p.add_argument("--vlm-model", default="claude-opus-5",
-                   help="vision LLM standing in for Astra-Global")
-    p.add_argument("--vlm-base-url", default="https://openrouter.ai/api/v1")
-    p.add_argument("--vlm-key-env", default="OPENROUTER_API_KEY")
+    p.add_argument("--vlm-model", default="gpt-6-astra",
+                   help="chat-completions model filling the Astra slot; use a "
+                        "matching --pricing file if it is not gpt-6-astra")
+    p.add_argument("--vlm-base-url", default="https://api.openai.com/v1")
+    p.add_argument("--vlm-key-env", default="OPENAI_API_KEY")
     p.add_argument("--local-policy-host", default="localhost")
     p.add_argument("--local-policy-port", type=int, default=0,
                    help="port of a RoboBenchMart policy server (octo/pi0) to "
@@ -99,42 +101,15 @@ def parse_args(argv=None):
 
 def build_backends(args, cfg, oracle, rng):
     if args.backend == "api":
-        # Real models, as far as real models exist for this.
-        #
-        #   Jev            the actual hosted model (jev_api.py).
-        #   Astra-Global   a vision LLM standing in for it, because Astra has
-        #                  no public API or weights.
-        #   Astra-Local    a downloaded VLA policy over RoboBenchMart's own
-        #                  websocket protocol, when --local-policy-port is
-        #                  given; otherwise the mock, so the Astra arm is
-        #                  explicitly part-simulated rather than quietly so.
-        from astraxjev.backends.astra_api import (
-            CompositeAstra,
-            VlmAstraGlobal,
-            WebsocketAstraLocal,
-        )
+        # Real models: gpt-6-astra (or --vlm-model) for Astra, hosted Jev.
+        from astraxjev.backends.astra_api import GptAstraBackend
         from astraxjev.backends.jev_api import JevApiBackend
 
-        vlm = VlmAstraGlobal(
+        astra = GptAstraBackend(
             model=args.vlm_model,
             base_url=args.vlm_base_url,
             api_key_env=args.vlm_key_env,
         )
-        if args.local_policy_port:
-            local = WebsocketAstraLocal(
-                host=args.local_policy_host, port=args.local_policy_port
-            )
-        else:
-            from astraxjev.backends import MockAstraBackend
-
-            m = cfg["mock"]
-            local = MockAstraBackend(
-                oracle,
-                global_sigma_m=m["astra_global_sigma_m"],
-                local_sigma_m=m["astra_local_sigma_m"],
-                rng=rng,
-            )
-        astra = CompositeAstra(vlm, local)
         jev = (
             JevApiBackend(provider=args.jev_provider, model=args.jev_model)
             if args.pipeline == "astra_jev"
@@ -274,19 +249,36 @@ def run_sim(args, cfg, prices):
             "git clone https://github.com/emb-ai/RoboBenchMart"
         )
     sys.path.insert(0, str(rbm))
+    sys.path.insert(0, str(ROOT / "sim"))
+    # dsynth loads assets/ and textures by path relative to the benchmark
+    # checkout, so run from there. Pin our own paths first.
+    if args.out:
+        args.out = str(Path(args.out).resolve())
+    if args.video_dir:
+        args.video_dir = str(Path(args.video_dir).resolve())
+    os.chdir(rbm)
 
     # Importing these modules is what registers the environments and the
-    # ds_fetch_basket agent with ManiSkill's gym registry.
+    # robot agents with ManiSkill's gym registry.
     import importlib
 
     importlib.import_module("dsynth.envs")
     importlib.import_module("dsynth.robots")
-    from dsynth.planning.motionplanner import FetchMotionPlanningSapienSolver
 
-    from astraxjev.executor import ManiSkillExecutor
+    from astraxjev.executor import ManiSkillExecutor, PandaExecutor
     from astraxjev.oracle import ManiSkillOracle
 
     task = cfg["task"]
+    is_panda = "panda" in task["robot_uids"]
+    if is_panda:
+        # PickToBasketPandaPedestal-v0: stationary Panda + wrist camera on a
+        # pedestal in front of the RoboBenchMart mini shelf.
+        importlib.import_module("panda_pedestal_env")
+        from panda_planner import PandaPedestalPlanner
+        cams = ("scene_left", "scene_right", "hand_camera")
+    else:
+        from dsynth.planning.motionplanner import FetchMotionPlanningSapienSolver
+        cams = ("left_base_camera_link", "right_base_camera_link", "fetch_hand")
     env_id = args.env_id or task["env_id"]
     scene_dir = args.scene_dir or task["scene_dir"]
     n = args.num_traj or task["num_traj"]
@@ -337,9 +329,9 @@ def run_sim(args, cfg, prices):
         obs = env.unwrapped.get_obs()
         sd = obs["sensor_data"]
         return Observation(
-            image=sd["left_base_camera_link"]["rgb"][0].cpu().numpy(),
-            extra_image=sd["right_base_camera_link"]["rgb"][0].cpu().numpy(),
-            wrist_image=sd["fetch_hand"]["rgb"][0].cpu().numpy(),
+            image=sd[cams[0]]["rgb"][0].cpu().numpy(),
+            extra_image=sd[cams[1]]["rgb"][0].cpu().numpy(),
+            wrist_image=sd[cams[2]]["rgb"][0].cpu().numpy(),
             state=obs["agent"]["qpos"][0].cpu().numpy(),
             prompt=prompt_box[0],
             time_step=int(env.unwrapped.elapsed_steps[0].item()),
@@ -351,15 +343,20 @@ def run_sim(args, cfg, prices):
         env.reset(seed=seed, options={"reconfigure": True})
         prompt_box = [env.unwrapped.language_instructions[0]]
 
-        planner = FetchMotionPlanningSapienSolver(
-            env, vis=False, print_env_info=False, visualize_target_grasp_pose=False
-        )
+        if is_panda:
+            planner = PandaPedestalPlanner(env)
+        else:
+            planner = FetchMotionPlanningSapienSolver(
+                env, vis=False, print_env_info=False, visualize_target_grasp_pose=False
+            )
         oracle = ManiSkillOracle(env)
         astra, jev = build_backends(args, cfg, oracle, rng)
         pipeline = build_pipeline(
             args, cfg, geom, astra, jev, plan_cache, oracle.capabilities()
         )
-        executor = ManiSkillExecutor(env, planner, max_env_steps=task["max_horizon"])
+        executor = (PandaExecutor if is_panda else ManiSkillExecutor)(
+            env, planner, max_env_steps=task["max_horizon"]
+        )
 
         ctx = EpisodeContext(
             observe=lambda pb=prompt_box: observe(env, pb),

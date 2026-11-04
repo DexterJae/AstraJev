@@ -8,30 +8,37 @@ hybrid pipeline for real. Two routes, same request shape:
   TypeSafe    POST https://api.typesafe.ai/v1/systemone
               model "jev-latest", key in TYPESAFE_API_KEY (waitlisted)
 
-Request shape (verified against the published API docs, 2026-11):
+Request shape -- checked against TypeSafe's published OpenAPI schema
+(https://api.typesafe.ai/openapi.json, SystemOneRequest) and a live call,
+2026-11-03:
 
     {"model": "...",
-     "state": "<text>"  |  [ "<text>", {"type": "image_url", "image_url": {...}} ],
+     "state": "<text>",
      "questions": {
-        "<id>": {"type": "choice", "instructions": "...", "options": [...]},
-        "<id>": {"type": "noul",   "instructions": "..."},
-        "<id>": {"type": "score",  "instructions": "...", "levels": [...]}}}
+        "<id>": {"type": "choice", "instructions": "...",
+                 "criteria": {"<option>": "<what counts as it>", ...}},
+        "<id>": {"type": "noul",   "instructions": "<proposition>"},
+        "<id>": {"type": "score",  "instructions": "...",
+                 "criteria": ["<level 0>", "<level 1>", ...]}}}   # 1-10 levels
 
-Response shape:
+Response shape (SystemOneResponse):
 
-    {"<id>": {"type": "choice", "choice": "left",
-              "probabilities": {...}, "confidence": 0.9},
-     "<id>": {"type": "noul",   "noul": 0.98},
-     "<id>": {"type": "score",  "score": 1.21, "legend": [...],
-              "confidence": 0.8},
-     "usage": {"input_tokens": 183, "cost": 1.4994e-05}}
+    {"model": "jev-1.14.0",
+     "answers": {
+        "<id>": {"type": "choice", "choice": "left",
+                 "probabilities": {...}, "confidence": 0.9},
+        "<id>": {"type": "noul",   "noul": 0.98},
+        "<id>": {"type": "score",  "score": 1.21, "legend": {...},
+                 "probabilities": {...}, "confidence": 0.8}},
+     "usage": {"input_tokens": 183, "output_tokens": 12}}
 
-Two things about this that matter for the experiment:
+Things that matter for the experiment:
 
-  * `usage.cost` is the provider's own figure in USD, so for Jev the cost side
-    of the comparison stops being an assumption entirely. The ledger records
-    it as authoritative and keeps the locally computed figure alongside, so a
-    divergence between the two is visible rather than silent.
+  * TypeSafe reports token counts, not dollars, so the Jev dollar figure is
+    tokens x the published rate (config/pricing.yaml). If a provider adds
+    `usage.cost` (OpenRouter's route may), it is recorded as authoritative.
+  * The OpenRouter route is assumed to take the same body; it has not been
+    exercised with a valid key yet.
 
   * All questions in one call share a single read of the state, which is the
     property the whole cost argument rests on. The batch interface is
@@ -114,10 +121,12 @@ class JevApiBackend:
         out: dict[str, Any] = {}
         for q in questions:
             if q.kind == "choice":
+                # criteria maps each option name to what counts as it; our
+                # options are self-describing, so the name is its own gloss.
                 out[q.id] = {
                     "type": "choice",
                     "instructions": q.instruction,
-                    "options": list(q.options or ()),
+                    "criteria": {str(o): str(o) for o in (q.options or ())},
                 }
             elif q.kind == "noul":
                 # Jev's noul takes the proposition as its instruction.
@@ -126,10 +135,12 @@ class JevApiBackend:
                     "instructions": q.proposition or q.instruction,
                 }
             elif q.kind == "score":
+                # Ordinal levels only: "unknown" is our abstain marker, not a
+                # point on the scale, and the API caps levels at 10.
                 out[q.id] = {
                     "type": "score",
                     "instructions": q.instruction,
-                    "levels": list(q.rubric),
+                    "criteria": _score_levels(q),
                 }
             else:
                 raise ValueError(f"unsupported question kind {q.kind!r}")
@@ -153,14 +164,16 @@ class JevApiBackend:
             "questions": self._questions_payload(questions),
         }
         body, wall_ms = self._post(payload)
+        # TypeSafe nests answers under "answers"; accept a flat body as well.
+        raw_answers = body.get("answers") if isinstance(body.get("answers"), dict) else body
 
         answers: dict[str, Answer] = {}
         for q in questions:
-            raw = body.get(q.id)
+            raw = raw_answers.get(q.id)
             if raw is None:
                 raise JevApiError(
                     f"Jev returned no answer for question {q.id!r}; got keys "
-                    f"{sorted(k for k in body if k != 'usage')}"
+                    f"{sorted(k for k in raw_answers if k != 'usage')}"
                 )
             answers[q.id] = _parse_answer(q, raw)
 
@@ -212,6 +225,10 @@ class JevApiBackend:
         raise last if last else JevApiError("request failed")
 
 
+def _score_levels(q: Question) -> list[str]:
+    return [r for r in q.rubric if r != "unknown"][:10]
+
+
 def _parse_answer(q: Question, raw: dict) -> Answer:
     """Map one Jev answer onto our Answer type.
 
@@ -229,7 +246,8 @@ def _parse_answer(q: Question, raw: dict) -> Answer:
     if q.kind == "noul":
         return Answer(id=q.id, kind="noul", probability=float(raw.get("noul", 0.0)))
 
-    levels = list(q.rubric)
+    # `score` is the probability-weighted index over the levels we sent.
+    levels = _score_levels(q)
     score = float(raw.get("score", 0.0))
     n = max(1, len(levels) - 1)
     fraction = max(0.0, min(1.0, score / n))
